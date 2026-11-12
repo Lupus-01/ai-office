@@ -18,7 +18,7 @@ const COMPOSE = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><tit
 <script>(async()=>{const d=document.getElementById('frame').contentDocument;d.open();d.write(await (await fetch('/editor')).text());d.close();})();</script>
 <button id="send">보내기</button>
 <script>document.getElementById('send').onclick=async()=>{const e=document.getElementById('frame').contentDocument.getElementById('editor');
-await fetch('/sent-mail',{method:'POST',body:JSON.stringify({to:document.querySelector('[name=to]').value,subject:document.querySelector('[name=subject]').value,text:e.innerText,img:!!e.querySelector('img[alt=명함]')})});
+await fetch('/sent-mail',{method:'POST',body:JSON.stringify({to:document.querySelector('[name=to]').value,subject:document.querySelector('[name=subject]').value,text:e.innerText,html:e.innerHTML,img:!!e.querySelector('img[alt=명함]')})});
 location.href='/sent';};</script></body></html>`;
 
 export async function verifyMailEditor() {
@@ -73,7 +73,36 @@ export async function verifyMailEditor() {
     assert.ok(sent[0].text.startsWith(body), '본문은 서명 앞에 들어간다');
     assert.match(sent[0].text, /운영팀 매니저/);
     assert.equal(sent[0].subject, 'AI Office 메일 발송 테스트', '본문이 제목 칸에 섞이지 않는다');
-    return [{ name: '메일 편집기: 기본 서명·명함 이미지 유지, 본문 1회 입력, 보낸메일함으로 발송 확인', interaction: 'click', passed: true }];
+    assert.doesNotMatch(sent[0].html, /<table[^>]*border-collapse|border-left:4px/, '서식 단서가 없는 본문은 글자만 넣는다');
+    // 서식 단서(■ 제목, · 라벨  값)가 있는 본문: 같은 글자를 구획 제목·요약 표로 꾸며 넣고, 원문 대조와 서명 유지는 그대로다
+    const rich = ['가상별 상담사님, 안녕하세요.', '', '■ 한눈에 보기', '· 상담  5건 (최근 30일)', '· 후기  3건', '', '■ 이번 달 함께 해 보면 좋은 것', '1. 접속 시간을 정해 주세요', '접속해 계셔야 상담이 연결됩니다.', '', '감사합니다.'].join('\n');
+    const squash = (text) => text.replace(/\s+/g, '');
+    const formattedResult = await broker.deliver({ scope: 'mail-editor-rich', allowedActions: ['mail'], instructionKey: 'k2', signal: new AbortController().signal, body: rich,
+      publication: { id: 'm2', action: 'mail', service: 'naverworks_mail', connection: account.id, target: `${origin}/compose`, recipients: ['fixture@example.invalid'], subject: '[가상상담] 가상별 상담사님, 11월 활동 리포트입니다' },
+      execute: async ({ url, token }) => {
+        const call = async (name, args = {}) => {
+          const r = await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ name, arguments: args }) });
+          const data = await r.json(); if (data.error) throw new Error(`${name}: ${data.error}`); return data.result;
+        };
+        const refs = Object.fromEntries((await call('browser_snapshot')).frames.flatMap((f) => f.controls).map((c) => [c.label, c.ref]));
+        await call('browser_fill_content', { ref: refs.to, field: 'recipients' });
+        await call('browser_fill_content', { ref: refs.subject, field: 'subject' });
+        const filled = await call('browser_fill_content', { ref: refs['본문'], field: 'body' });
+        assert.match(filled.formatted || '', /서식/);
+        const again = Object.fromEntries((await call('browser_snapshot')).frames.flatMap((f) => f.controls).map((c) => [c.label, c.ref]));
+        assert.match((await call('browser_fill_content', { ref: again['본문'], field: 'body' })).note || '', /이미 입력/, '서식 본문도 두 번 넣지 않는다');
+        await call('browser_submit', { ref: again['보내기'] });
+        await call('browser_finish'); return 'done';
+      } });
+    assert.equal(formattedResult.status, 'confirmed');
+    assert.equal(sent.length, 2);
+    assert.ok(squash(sent[1].text).startsWith(squash(rich)), '보이는 글자는 원문과 같고 서명 앞에 한 번만 들어간다');
+    assert.equal(squash(sent[1].text).split(squash('가상별 상담사님, 안녕하세요.')).length - 1, 1);
+    assert.match(sent[1].html, /border-left:\s*4px solid[^"]*"[^>]*>■ 한눈에 보기</, '구획 제목 서식');
+    assert.match(sent[1].html, /<table[\s\S]*· 상담[\s\S]*font-weight:\s*700[^>]*>5건 \(최근 30일\)</, '요약 표와 굵은 값');
+    assert.equal(sent[1].img, true, '서식 본문도 기본 서명을 지우지 않는다');
+    return [{ name: '메일 편집기: 기본 서명·명함 이미지 유지, 본문 1회 입력, 보낸메일함으로 발송 확인', interaction: 'click', passed: true },
+      { name: '메일 편집기: 서식 단서가 있는 본문을 구획 제목·요약 표로 꾸며 넣고 글자는 원문과 같게 유지', interaction: 'click', passed: true }];
   } finally {
     await broker?.close(); await browser?.close(); site?.close();
     await rm(temp, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
