@@ -613,7 +613,7 @@ export async function orchestrate({ root, run, prompt, execute: runAI, signal, m
     if (asideRun && ASIDE_BINARY.test(stage.output)) return { stage, result: { status: 'replan', reason: `Aside 직원은 ${stage.output.split('.').at(-1)} 파일을 만들지 않습니다. 이 단계(${stage.id})는 파일을 만드는 다른 직원에게 배정하거나 md·json 산출물로 바꾸세요.` } };
     const runStage = (args) => asideRun ? execute(args) : !site ? execute(args)
       : publicWeb ? (outbound?.browsePublic ? outbound.browsePublic({ target: stage.target, signal, execute: (browser) => execute({ ...args, browser }) }) : execute(args))
-      : outbound?.browse ? outbound.browse({ connection: stage.connection, target: stage.target, signal, execute: (browser) => execute({ ...args, browser }) })
+      : outbound?.browse ? outbound.browse({ connection: stage.connection, target: stage.target, signal, downloadDir: join(taskDir, 'downloads'), execute: (browser) => execute({ ...args, browser }) })
         : Promise.reject(Object.assign(new Error('사이트 조회를 위해 계정 연결을 먼저 완료해 주세요.'), { code: 'CONNECTION_REQUIRED' }));
     for (let attempt = 0; attempt < 2; attempt++) {
       checkStop();
@@ -632,7 +632,7 @@ export async function orchestrate({ root, run, prompt, execute: runAI, signal, m
           '완료 기준을 채우면 바로 끝내세요. 기준에 없는 추가 조사·확인은 하지 않습니다.',
         ].filter(Boolean) : [
           publicWeb ? `공개 웹 조회: 로그인 없는 브라우저(office_browser 도구)로 ${stage.target}에서 시작해 화면을 읽으세요. WebSearch·WebFetch도 함께 쓸 수 있습니다. 읽기 전용이라 입력·등록은 하지 않습니다. 유튜브 숏츠의 조회수는 /shorts/영상ID 화면에 글자로 나오지 않으니 /watch?v=영상ID로 열어 읽으세요. 결과는 출력 파일에 직접 작성하세요. 영상 내용처럼 글자로 확인할 수 없는 항목은 미확인으로 적으세요.` : '',
-          site && !publicWeb ? `사이트 조회: 연결 계정 브라우저(office_browser 도구)로 ${stage.target}에서 시작해 필요한 자료를 조회하세요. 읽기 전용이라 저장·등록·수정·삭제는 하지 않습니다. 대표 요청의 의도에 맞는 메뉴·탭·필터를 사이트를 둘러보며 스스로 찾아 쓰고(대표가 범위를 정했으면 그 범위의 자료만 엽니다. 예: 특정 회원의 글이면 작성자 검색·필터를 먼저 쓰고 공지·다른 게시판은 열지 않음), 목록은 browser_text의 offset으로 끝까지 읽으세요. 결과는 출력 파일에 직접 작성하고, 대표가 요구한 항목(연락처 등)은 빠뜨리지 마세요. 조건에 맞는 항목이 없으면 그 사실과 확인한 화면·조건을 출력 파일에 적으세요. 이 단계에서는 연결 사이트 밖(웹 검색·다른 사이트)은 볼 수 없습니다. 그런 자료는 다른 단계가 맡으니 사이트 안 자료만 정리하고, 사이트 밖 자료가 없다는 이유로 대표에게 묻지 마세요.` : '',
+          site && !publicWeb ? `사이트 조회: 연결 계정 브라우저(office_browser 도구)로 ${stage.target}에서 시작해 필요한 자료를 조회하세요. 읽기 전용이라 저장·등록·수정·삭제는 하지 않습니다. 대표 요청의 의도에 맞는 메뉴·탭·필터를 사이트를 둘러보며 스스로 찾아 쓰고(대표가 범위를 정했으면 그 범위의 자료만 엽니다. 예: 특정 회원의 글이면 작성자 검색·필터를 먼저 쓰고 공지·다른 게시판은 열지 않음), 목록은 browser_text의 offset으로 끝까지 읽으세요. 화면에 없고 파일로만 받을 수 있는 자료(엑셀 다운로드 등)는 그 버튼을 browser_download로 누르면 이 업무 폴더의 downloads/에 저장됩니다. 엑셀·CSV는 글자 파일(.txt)로도 풀어 주니 결과의 text 경로를 Read로 읽으세요. 결과는 출력 파일에 직접 작성하고, 대표가 요구한 항목(연락처 등)은 빠뜨리지 마세요. 조건에 맞는 항목이 없으면 그 사실과 확인한 화면·조건을 출력 파일에 적으세요. 이 단계에서는 연결 사이트 밖(웹 검색·다른 사이트)은 볼 수 없습니다. 그런 자료는 다른 단계가 맡으니 사이트 안 자료만 정리하고, 사이트 밖 자료가 없다는 이유로 대표에게 묻지 마세요.` : '',
           mailDraft ? '이번 산출물은 메일 문안 JSON입니다. 입력 조사 자료의 회사별 연락처·출처를 확인하고 대표 양식을 채운 messages:[{recipients:[주소],subject,body}]와 skipped:[미확인 업체·이유]를 작성하세요. 실제 메일은 지금 보내지 않습니다.' : '',
           canRunScripts(stage.dept) ? officeGuide({ output: stage.output, program: programRoot() }) : '',
           html ? `${HTML_BRIEF}\nHTML 보고서 기본 양식: ${join(programRoot(), 'org/templates/report.html')}. 읽어서 정보 구조·스타일을 참고하고 업무에 맞게 작성하세요. {{REPORT_*}} 빈 항목은 모두 채우거나 불필요한 섹션과 함께 제거하세요. 근거가 없으면 꾸미기 위해 숫자·차트를 만들지 마세요.` : '',

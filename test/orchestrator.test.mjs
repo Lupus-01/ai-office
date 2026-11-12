@@ -746,7 +746,11 @@ test('도구 문제는 대표에게 묻지 않고 계획을 고쳐 다시 실행
       if (reply.status === 'done') { mkdirSync(join(root, dirname(output)), { recursive: true }); writeFileSync(join(root, output), '완료'); }
       return JSON.stringify(reply);
     };
-    const outbound = { connections: () => [{ id: 'erp', label: 'ERP', provider: 'web', status: 'connected' }], browse: async ({ execute: go }) => go({ url: 'http://127.0.0.1:9/tools', token: 't', permissionsFile: join(tmpdir(), 'x.json'), write: true }) };
+    const outbound = { connections: () => [{ id: 'erp', label: 'ERP', provider: 'web', status: 'connected' }], browse: async ({ execute: go, downloadDir }) => {
+      // 조회 단계에서 받은 파일은 그 업무 폴더의 downloads/에 둔다
+      assert.equal(downloadDir, join(root, 'outputs', ...task.split('/'), 'downloads'));
+      return go({ url: 'http://127.0.0.1:9/tools', token: 't', permissionsFile: join(tmpdir(), 'x.json'), write: true });
+    } };
     const onDecision = () => {};
     const text = await orchestrate({ root, run: { id: 'run-tools-' + label, rootId: 'run-tools-' + label, engine: 'claude', task }, prompt: '사내 자료 정리', execute, signal: new AbortController().signal, outbound, onDecision, sourceCheck: async () => ({ checked: 0, broken: [], mismatched: [], unknown: [], skipped: 0 }) });
     return { text, plans, stages };

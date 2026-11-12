@@ -425,6 +425,8 @@ test/                     node:test
 - 계획 단계에 `connection`(일반 웹사이트 연결 id)과 `target`(https 또는 localhost 시작 주소)을 두면 조회 단계다. 일반 단계는 둘 다 빈 문자열이다.
 - 실행: `outbound.browse`가 연결 세션을 열고 직원 실행에 브라우저 도구를 붙인다. Claude는 Read·Glob·Grep·Write·Edit와 office_browser 도구만, Codex는 workspace-write를 유지한다.
 - 읽기 전용: `browser_submit`·`browser_attach`·`browser_fill_content`를 거부한다. 클릭은 이름이 쓰기 동작 자체인 버튼(저장·등록·수정·삭제·승인 등, `READ_ONLY_BLOCK`)만 막는다. Enter는 검색용으로 허용한다.
+- 파일 내려받기(`browser_download`, `lib/downloads.mjs`): 화면에 없고 파일로만 주는 자료(엑셀 다운로드 등)는 조회 단계에서만 받는다. 버튼·링크를 눌러 시작된 내려받기 하나를 업무 폴더 `downloads/`에 저장한다(같은 이름은 ` (2)`, 덮어쓰지 않음). 받는 형식은 `.xlsx .xls .csv .tsv .txt .json .pdf .docx .pptx .hwp .hwpx`, 파일당 25MB, 단계당 10개다. 연결 사이트 밖에서 오는 파일, 실행·압축 파일, 빈 파일은 받지 않는다. `.xlsx`와 글자 파일(UTF-8, 안 되면 EUC-KR)은 `<파일 이름>.txt`로 풀어 직원이 Read로 읽는다(시트별 행, 칸은 탭). 풀지 못하는 형식은 원본만 둔다. 도구가 기다리지 않는 내려받기는 취소한다. 공개 웹 조회·외부 작업 단계·Aside 직원은 쓰지 못한다. 내려받은 파일은 최종산출물에 넣지 않는다(단계 산출물이 아님).
+- 계정 브라우저는 `acceptDownloads: true`로 띄운다. 브라우저가 임시 폴더에 받을 뿐 대표의 다운로드 폴더에는 저장하지 않고, 업무 폴더로 옮기는 경로는 `browser_download`뿐이다. 공개 웹 조회 브라우저는 내려받기를 받지 않는다.
 - 사이트 밖 차단: 조회 단계는 연결 사이트 안 화면만 본다. 웹 검색·다른 사이트는 쓰지 않는다(로그인 화면 내용 유출 방지). 공개 웹 자료가 필요하면 connection 없는 별도 단계로 나누고 조회 결과를 inputs로 받는다.
 - 대표가 조사 범위를 정했으면(특정 회원의 글, 특정 메뉴 등) 그 밖의 화면(공지·규칙·다른 게시판)은 열지 않는다.
 - 직원은 의도에 맞는 메뉴·탭·필터를 스스로 찾고, `browser_text`의 offset으로 끝까지 읽고, 결과를 출력 파일에 쓴다. 요구 항목(연락처 등)을 빠뜨리지 않는다. 없으면 확인한 화면·조건을 적는다.
