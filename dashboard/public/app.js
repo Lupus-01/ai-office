@@ -177,6 +177,7 @@ export function normalizeState(raw = {}) {
     mode: raw.mode || 'none',
     connectionStatus: raw.connectionStatus || { connected: 0, needsLogin: 0 },
     workspace: raw.workspace && typeof raw.workspace === 'object' ? raw.workspace : {},
+    asideAdvice: raw.asideAdvice && typeof raw.asideAdvice === 'object' ? raw.asideAdvice : null,
   };
 }
 
@@ -198,6 +199,13 @@ export function toolBanners(tools, { demo = false } = {}) {
   if (tools.claude?.installed === false) out.push({ key: 'claude', text: 'Claude가 설치되지 않았습니다. Codex 직원은 사용할 수 있어요 — npm run doctor로 확인하세요' });
   if (tools.codex?.installed === false) out.push({ key: 'codex', text: 'Codex가 설치되지 않았습니다. 비서실장 제공자를 Claude로 바꿔 사용하세요 — npm run doctor로 확인하세요' });
   return out;
+}
+
+// 브라우저 업무 Aside 권장 배너: 바꿀 직원이 있거나(브라우저 업무를 맡았던 직원) Aside 직원인데 Aside가 없을 때만 알린다(닫을 수 있음).
+// 브라우저 업무가 없는 회사에 설치 권장만 계속 띄우지 않는다(그 안내는 doctor·서버 켜기 때 한다)
+export function asideBanners(advice, { demo = false } = {}) {
+  if (demo || !advice || advice.level !== 'warn' || !advice.message) return [];
+  return [{ key: `aside-${advice.level}-${(advice.candidates || []).map((c) => c.id).join(',')}`, text: advice.message }];
 }
 
 // 가져올 회사 구성 파일 미리보기. 형식만 가볍게 보고(최종 검증은 서버), 부서·직원 수를 센다
@@ -962,7 +970,7 @@ function applyDemoLock() {
     if (WRITE_ACTS.has(b.dataset.act) && !b.disabled) { b.disabled = true; b.title = DEMO_HINT; }
   }
   for (const el of document.querySelectorAll('[data-cap-input], [data-handoff-add]')) if (!el.disabled) { el.disabled = true; el.title = DEMO_HINT; }
-  for (const id of ['addDeptBtn', 'chiefSubmit', 'chiefInput', 'chiefEngine', 'chiefModel', 'chiefEffort', 'threadSend', 'threadPrompt', 'threadModel', 'threadEffort']) {
+  for (const id of ['addDeptBtn', 'chiefSubmit', 'chiefInput', 'chiefAttach', 'chiefEngine', 'chiefModel', 'chiefEffort', 'threadSend', 'threadPrompt', 'threadModel', 'threadEffort']) {
     const el = $(id);
     if (el && !el.disabled) { el.disabled = true; el.title = DEMO_HINT; }
   }
@@ -1155,7 +1163,7 @@ function renderTop() {
 }
 
 function renderBanners() {
-  const list = [...workspaceBanners(S.workspace, { demo: S.demo }), ...toolBanners(S.tools, { demo: S.demo })].filter((b) => !ui.dismissedBanners.has(b.key));
+  const list = [...workspaceBanners(S.workspace, { demo: S.demo }), ...toolBanners(S.tools, { demo: S.demo }), ...asideBanners(S.asideAdvice, { demo: S.demo })].filter((b) => !ui.dismissedBanners.has(b.key));
   setHTML($('toolBanners'), list.map((b) => `
     <div class="tool-banner"><span>${esc(b.text)}</span>${b.sticky ? '' : `
       <button type="button" class="icon-btn" data-banner="${esc(b.key)}" data-key="banner-${esc(b.key)}" aria-label="알림 닫기">✕</button>`}</div>`).join(''));
@@ -1430,7 +1438,7 @@ function renderToolFeed() {
     }
     return `<li class="feed-item k-${esc(String(e.kind || '').replace('.', '-'))}">
       <time datetime="${esc(e.ts)}">${hms(e.ts)}</time>
-      <div class="fi-body"><div class="fi-line">${e.agent && e.agent !== 'chief' ? avatar(e.agent, 'ava-sm') : '<span class="ava ava-sm ava-chief" aria-hidden="true">★</span>'}<b>${esc(name)}</b><span class="kind">${esc(kind)}</span>${e.tool ? `<code>${esc(e.tool)}</code>` : ''}${verdict}${e.engine === 'codex' ? '<span class="engine engine-codex">codex</span>' : ''}</div>
+      <div class="fi-body"><div class="fi-line">${e.agent && e.agent !== 'chief' ? avatar(e.agent, 'ava-sm') : '<span class="ava ava-sm ava-chief" aria-hidden="true">★</span>'}<b>${esc(name)}</b><span class="kind">${esc(kind)}</span>${e.tool ? `<code>${esc(e.tool)}</code>` : ''}${verdict}${e.engine === 'codex' ? '<span class="engine engine-codex">codex</span>' : e.engine === 'aside' ? '<span class="engine engine-aside">aside</span>' : ''}</div>
       ${e.summary ? `<p>${esc(e.summary)}</p>` : ''}</div></li>`;
   }).join('') : '<li class="empty">아직 이벤트가 없어요. 업무를 지시하면 여기에 실시간으로 쌓여요.</li>');
 }
@@ -1507,7 +1515,7 @@ function renderTasks() {
     const live = r.status === 'running' || r.status === 'queued';
     const who = runWho(r);
     return `<li class="run run-${esc(r.status)}${r.needsReply ? ' run-needs-reply' : ''}">
-      <div class="task-top"><span class="tag r-${esc(r.status)}">${esc(runLabel(r))}</span><b>${esc(who)}</b>${r.engine === 'codex' ? '<span class="engine engine-codex">codex</span>' : ''}${replyBadge(r, `rb-${r.id}`)}<time>${esc(timeAgo(runStart(r)))}</time></div>
+      <div class="task-top"><span class="tag r-${esc(r.status)}">${esc(runLabel(r))}</span><b>${esc(who)}</b>${r.engine === 'codex' ? '<span class="engine engine-codex">codex</span>' : r.engine === 'aside' ? '<span class="engine engine-aside">aside</span>' : ''}${replyBadge(r, `rb-${r.id}`)}<time>${esc(timeAgo(runStart(r)))}</time></div>
       <p class="run-text">${r.parentId ? '<span class="reply-mark" title="이어서 답한 실행">↳ 답장</span> ' : ''}${esc(runText(r))}</p>
       ${r.model ? `<p class="run-usage">${esc(r.model)}${r.effort ? ` · ${esc(r.effort)}` : ''}</p>` : ''}
       ${r.continuous ? `<p class="run-monitor">${esc({ checking: '자료 확인 중', waiting: '새 자료 대기', retrying: '확인 재시도 대기', needs_decision: '감시 결정 대기', suspended: '감시 재개 대기', paused: '감시 일시정지', stopped: '감시 중지', finished: '감시 종료' }[r.monitor?.status] || '지속 감시 준비')} · ${r.monitor?.deadlineAt ? `${esc(new Date(r.monitor.deadlineAt).toLocaleString('ko-KR'))}까지` : '중지할 때까지'} · 새 자료 ${r.monitor?.discoveries || 0}건 · 보고 ${r.monitor?.deliveries || 0}건${r.monitor?.nextAt && live ? `<br>다음 확인 ${esc(new Date(r.monitor.nextAt).toLocaleTimeString('ko-KR'))}` : ''}${r.monitor?.error ? `<br>최근 오류: ${esc(r.monitor.error)}` : ''}</p>` : ''}
@@ -1597,7 +1605,7 @@ function agentProfile(a) {
       <dt>담당</dt><dd>${esc(a.specialty || '—')}</dd>
       <dt>현재</dt><dd>${esc(a.status === 'working' || a.queued ? statusLine(a) : STATUS_LABEL[a.status] || a.status)}</dd>
       <dt>마지막 활동</dt><dd>${esc(timeAgo(lastTs))}${a.lastSummary && a.status !== 'working' ? ` · ${esc(a.lastSummary)}` : ''}</dd>
-      <dt>모델</dt><dd>${esc(dept?.engine === 'codex' ? `${a.codexModel || dept.codexModel || 'gpt-6.1-sol'} · ${a.codexEffort || dept.codexEffort || 'max'} (Codex)` : a.model || (a.lead ? 'opus (팀장 기본)' : dept?.model ? `${dept.model} (부서 기본)` : 'sonnet (기본)'))}</dd>
+      <dt>모델</dt><dd>${esc(a.engine === 'aside' || dept?.engine === 'aside' ? 'Aside (브라우저 업무 · 대표의 Aside 로그인과 연결 구독 사용)' : dept?.engine === 'codex' ? `${a.codexModel || dept.codexModel || 'gpt-6.1-sol'} · ${a.codexEffort || dept.codexEffort || 'max'} (Codex)` : a.model || (a.lead ? 'opus (팀장 기본)' : dept?.model ? `${dept.model} (부서 기본)` : 'sonnet (기본)'))}</dd>
       <dt>id</dt><dd><code>${esc(a.id)}</code></dd>
     </dl>
     <div class="profile-actions">
@@ -1762,7 +1770,7 @@ function fillDeptForm(values) {
   f.color.value = /^#[0-9a-f]{6}$/i.test(values.color || '') ? values.color : COLORS[0];
   f.summary.value = values.summary || '';
   f.instructions.value = values.instructions || '';
-  f.engine.value = values.engine === 'codex' ? 'codex' : 'claude';
+  f.engine.value = ['codex', 'aside'].includes(values.engine) ? values.engine : 'claude';
   fillModels(f.codexModel, 'codex', values.codexModel || '', '기본(gpt-6.1-sol)');
   fillEfforts(f.codexEffort, 'codex', values.codexModel || 'gpt-6.1-sol', values.codexEffort || '', '기본(max)');
   f.codexRole.value = values.codexRole || (deptEditing?.engine === 'codex' || values.id === 'verify' ? 'review' : 'exec');
@@ -1790,7 +1798,8 @@ function syncDeptUi() {
   $('bypassWarn').hidden = f.permission.value !== 'bypassPermissions';
   const codex = f.engine.value === 'codex';
   $('codexFields').hidden = !codex;
-  $('deptModelRow').hidden = codex;
+  // Aside 부서는 Claude 모델을 쓰지 않는다(대표가 Aside에 연결한 구독 사용)
+  $('deptModelRow').hidden = codex || f.engine.value === 'aside';
   $('deptToolsField').hidden = codex;
   $('deptPermissionRow').hidden = codex;
   for (const b of $('deptSwatches').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.color === f.color.value));
@@ -1917,8 +1926,9 @@ function refreshAgentDeptUi() {
   const roles = rolesFor(deptId);
   const dept = deptOf(deptId);
   const codex = dept?.engine === 'codex';
-  $('agentModelRow').hidden = codex;
-  $('agentCodexFields').hidden = !codex;
+  const aside = f.engine.value === 'aside' || dept?.engine === 'aside';
+  $('agentModelRow').hidden = codex || aside;
+  $('agentCodexFields').hidden = !codex || aside;
   fillModels(f.codexModel, 'codex', agentEditing?.codexModel || '', `부서 기본(${dept?.codexModel || 'gpt-6.1-sol'})`);
   fillEfforts(f.codexEffort, 'codex', agentEditing?.codexModel || dept?.codexModel || 'gpt-6.1-sol', agentEditing?.codexEffort || '', `부서 기본(${dept?.codexEffort || 'max'})`);
   $('agentRole').innerHTML = '<option value="">직접 입력</option>' + roles.map((r, i) => `<option value="${i}">${esc(r.name || r.key)}${r.lead ? ' (팀장)' : ''}</option>`).join('');
@@ -1961,6 +1971,7 @@ function openAgentDialog({ deptId, agent } = {}) {
     f.instructions.value = agent.instructions || '';
     f.thoughts.value = (Array.isArray(agent.thoughts) ? agent.thoughts : []).join('\n');
     f.model.value = agent.model || '';
+    f.engine.value = agent.engine === 'aside' ? 'aside' : '';
     f.id.value = agent.id;
     f.lead.checked = !!agent.lead;
     f.active.checked = agent.active !== false;
@@ -2009,6 +2020,8 @@ async function submitAgent(ev) {
     active: f.active.checked,
   };
   if (f.model.value) body.model = f.model.value; else if (agentEditing?.model) body.model = null;
+  // 직원 엔진: 비우면 부서 설정을 따른다. Aside는 브라우저 업무 직원에게 권장한다
+  if (f.engine.value === 'aside') body.engine = 'aside'; else if (agentEditing?.engine) body.engine = '';
   if (deptOf(f.department.value)?.engine === 'codex') Object.assign(body, { codexModel: f.codexModel.value, codexEffort: f.codexEffort.value });
   if (agentRoleKey) body.role = agentRoleKey;
   const btn = $('agentSubmit');
@@ -2133,27 +2146,92 @@ function setChiefSending(sending) {
   button.textContent = sending ? '전달 중…' : '지시하기';
   button.setAttribute('aria-busy', String(sending));
   $('chiefInput').readOnly = sending;
+  $('chiefAttach').disabled = sending || S.demo;
   $('chiefSendStatus').textContent = sending ? '비서실장에게 지시를 전달하고 있습니다. 내용을 확인하는 데 최대 15초쯤 걸립니다.' : '';
+  for (const remove of document.querySelectorAll('.chief-file-remove')) remove.disabled = sending;
   if (sending) button.disabled = true;
   else { renderChiefSettings(); if (movedFocus) $('chiefInput').focus(); }
 }
+
+// ───── 지시창 파일 올리기 ─────
+// 고른 파일은 지시할 때 서버(작업 공간 보관함/업로드/<날짜>/)에 올리고, 저장 경로를 지시문 끝에 붙인다.
+// 지시가 실패해 다시 보낼 때 같은 파일을 또 올리지 않도록 올린 경로를 기억한다
+const UPLOAD_LIMIT_MB = 25, UPLOAD_MAX = 10;
+const UPLOAD_ACCEPT = /\.(?:docx|doc|xlsx|xls|csv|pptx|ppt|pdf|txt|md|hwp|hwpx|png|jpe?g|gif|webp)$/i;
+let chiefFiles = [];
+const uploadedPaths = new WeakMap();
+function addChiefFiles(list) {
+  const rejected = [];
+  for (const file of list) {
+    if (!UPLOAD_ACCEPT.test(file.name)) rejected.push(`${file.name}(올릴 수 없는 형식)`);
+    else if (file.size > UPLOAD_LIMIT_MB * 1024 * 1024) rejected.push(`${file.name}(${UPLOAD_LIMIT_MB}MB 초과)`);
+    else if (chiefFiles.some((f) => f.name === file.name && f.size === file.size)) continue;
+    else if (chiefFiles.length >= UPLOAD_MAX) rejected.push(`${file.name}(한 번에 ${UPLOAD_MAX}개까지)`);
+    else chiefFiles.push(file);
+  }
+  if (rejected.length) toast(`올리지 못한 파일: ${rejected.join(', ')}`, { type: 'error' });
+  renderChiefFiles();
+}
+function renderChiefFiles() {
+  const list = $('chiefFileList');
+  list.replaceChildren(...chiefFiles.map((file) => {
+    const item = el('li', 'chief-file');
+    item.append(el('span', 'chief-file-name', `📄 ${file.name}`));
+    const remove = el('button', 'chief-file-remove', '✕');
+    remove.type = 'button';
+    remove.setAttribute('aria-label', `${file.name} 빼기`);
+    remove.disabled = chiefSending;
+    remove.addEventListener('click', () => { chiefFiles = chiefFiles.filter((f) => f !== file); renderChiefFiles(); $('chiefInput').focus(); });
+    item.append(remove);
+    return item;
+  }));
+  list.hidden = !chiefFiles.length;
+}
+const fileBase64 = (file) => new Promise((resolveRead, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolveRead(String(reader.result).split(',')[1] || '');
+  reader.onerror = () => reject(new Error(`${file.name} 파일을 읽지 못했어요.`));
+  reader.readAsDataURL(file);
+});
+async function uploadChiefFiles() {
+  const paths = [];
+  for (const [i, file] of chiefFiles.entries()) {
+    if (!uploadedPaths.has(file)) {
+      $('chiefSendStatus').textContent = `파일 올리는 중 ${i + 1}/${chiefFiles.length}: ${file.name}`;
+      const saved = await api('POST', '/api/uploads', { name: file.name, data: await fileBase64(file) });
+      uploadedPaths.set(file, saved.path);
+    }
+    paths.push(uploadedPaths.get(file));
+  }
+  return paths;
+}
+// 지시문 끝에 올린 파일 경로를 붙인다. "첨부"라고 쓰면 메일 첨부로 읽힐 수 있어 다른 머리말을 쓴다
+export const withUploads = (prompt, paths) => (paths.length ? `${prompt}\n\n[업로드한 파일]\n${paths.map((p) => `- ${p}`).join('\n')}` : prompt);
 
 async function submitChief(ev) {
   ev.preventDefault();
   if (chiefSending) return;
   const input = $('chiefInput');
   const prompt = input.value.trim();
-  if (!prompt) { input.focus(); return; }
-  // 승인 요청 없이 완료 결과를 확인한다.
-  const act = chiefInputAction(prompt, S.tasks);
+  if (!prompt) {
+    input.focus();
+    if (chiefFiles.length) toast('파일로 무엇을 할지 한 줄로 적어 주세요. 예: 프로필 작성해 줘');
+    return;
+  }
+  // 승인 요청 없이 완료 결과를 확인한다(파일을 올리는 지시는 새 업무다).
+  const act = chiefFiles.length ? { action: 'send' } : chiefInputAction(prompt, S.tasks);
   if (act.action === 'show-result') { input.value = ''; openCompletion(act.taskId); return; }
   if (act.action === 'no-approval') { input.value = ''; toast('비서실장 검토가 끝나면 승인 없이 자동으로 완료됩니다.'); return; }
   setChiefSending(true);
   try {
     await chiefSaveQueue;
+    const request = withUploads(prompt, chiefFiles.length ? await uploadChiefFiles() : []);
+    if (chiefFiles.length) $('chiefSendStatus').textContent = '비서실장에게 지시를 전달하고 있습니다. 내용을 확인하는 데 최대 15초쯤 걸립니다.';
     const model = $('chiefModel').value;
-    const result = await api('POST', '/api/runs', { prompt, engine: $('chiefEngine').value, model, effort: $('chiefEffort').value });
+    const result = await api('POST', '/api/runs', { prompt: request, engine: $('chiefEngine').value, model, effort: $('chiefEffort').value });
     input.value = '';
+    chiefFiles = [];
+    renderChiefFiles();
     // 데스크톱에서는 상세 패널이 실행 목록 자리를 가리므로 닫아서 시작된 실행을 바로 보이게 한다
     if (ui.drawer) closeDrawer({ restoreFocus: false });
     toast(chiefResultMessage(result));
@@ -2279,8 +2357,11 @@ function renderThread() {
   $('threadTitle').textContent = latest ? `대화 · ${who}` : '대화';
   $('threadSub').textContent = runs.length ? `${runs.length}번 주고받음` : '';
 
+  // 업무가 끝났으면 대화 아래에 결과 파일(최종산출물)을 바로 내려받게 보여 준다
+  const files = busy ? null : threadFinalFiles(threadTaskId(runs));
   // 바뀐 것이 있을 때만 다시 그린다(입력 중 깜빡임·스크롤 튐 방지)
-  const sig = JSON.stringify(runs.map((r) => [r.id, r.status, r.needsReply, resultCache.get(r.id)?.text?.length ?? -1, resultCache.get(r.id)?.loading]));
+  const sig = JSON.stringify([runs.map((r) => [r.id, r.status, r.needsReply, resultCache.get(r.id)?.text?.length ?? -1, resultCache.get(r.id)?.loading]),
+    files && [Boolean(files.loading), files.error || '', files.data?.final?.updated || '', files.data?.final?.files?.length ?? -1]]);
   if (sig !== threadSig) {
     threadSig = sig;
     const list = $('threadList');
@@ -2308,6 +2389,7 @@ function renderThread() {
       }
       list.append(ask, ans);
     }
+    if (files) list.append(threadFilesNode(files));
     const body = list.parentElement;
     body.scrollTop = body.scrollHeight;
   }
@@ -2381,10 +2463,13 @@ async function refreshConnections() {
   const data = await response.json(); if (!response.ok) throw new Error(data.error || '연결 계정을 불러오지 못했습니다.');
   connectionCache = data.connections;
   $('connectionList').innerHTML = data.connections.length ? data.connections.map((c) => `<article class="connection-card">
-    <div><strong>${esc(c.label)}</strong><p class="help">${esc(data.providers.find((p) => p.id === c.provider)?.name || c.provider)}${c.hosts?.length ? ` (${esc(c.hosts.join(', '))})` : ''} · ${esc(CONNECTION_LABEL[c.status] || c.status)}${c.firstLoginDone === false ? ' · 처음 로그인 필요' : ''}${c.source === 'file' ? ' · 보관함/계정.env' : c.hasCredentials ? ' · 자동 로그인 저장됨' : ''}</p></div>
+    <div><strong>${esc(c.label)}</strong><p class="help">${esc(data.providers.find((p) => p.id === c.provider)?.name || c.provider)}${c.hosts?.length ? ` (${esc(c.hosts.join(', '))})` : ''} · ${esc(CONNECTION_LABEL[c.status] || c.status)}${c.firstLoginDone === false ? ' · 처음 로그인 필요' : ''}${c.source === 'file' ? ' · 보관함/계정.env' : c.hasCredentials ? ' · 자동 로그인 저장됨' : ''}${c.naverApi?.connected ? ' · 카페 공식 API 연결됨' : ''}</p>
+    ${c.provider === 'naver' && !data.naverApiConfigured ? '<p class="help">보관함/계정.env에 NAVER_API_CLIENT·NAVER_API_SECRET·NAVER_API_CALLBACK을 넣으면 카페 글을 공식 API로 올릴 수 있습니다.</p>' : ''}</div>
     <div class="connection-actions"><button type="button" class="btn btn-sm" data-connection="${esc(c.id)}" data-connection-action="open">${c.status === 'needs_login' ? '재연결' : '로그인 창 열기'}</button>
     ${c.source === 'file' ? '' : `<button type="button" class="btn btn-sm" data-connection="${esc(c.id)}" data-connection-action="credentials">${c.hasCredentials ? '로그인 정보 변경' : '자동 로그인 설정'}</button>`}
     ${c.status === 'connecting' ? `<button type="button" class="btn btn-sm btn-primary" data-connection="${esc(c.id)}" data-connection-action="confirm">연결 완료</button>` : ''}
+    ${c.provider === 'naver' && data.naverApiConfigured ? `<button type="button" class="btn btn-sm" data-connection="${esc(c.id)}" data-connection-action="naver-api">${c.naverApi?.connected ? '카페 공식 API 다시 연결' : '카페 공식 API 연결'}</button>` : ''}
+    ${c.naverApi?.connected ? `<button type="button" class="btn btn-sm" data-connection="${esc(c.id)}" data-connection-action="naver-api-off">공식 API 해제</button>` : ''}
     ${c.source === 'file' ? '' : `<button type="button" class="btn btn-sm" data-connection="${esc(c.id)}" data-connection-action="remove">연결 해제</button>`}</div></article>`).join('') : '<p class="help">연결한 계정이 없습니다. 업무에 사용할 계정을 한 번 연결해 주세요.</p>';
 }
 async function connectionAction(action) {
@@ -2402,6 +2487,16 @@ function watchConnections() {
     if (!$('connectionsDialog').open || !connectionCache.some((c) => c.status === 'connecting')) { clearInterval(connectionWatch); connectionWatch = null; return; }
     if (!connectionBusy) refreshConnections().catch(() => {});
   }, 2000);
+}
+// 네이버 동의 창에서 돌아올 때까지(최대 5분) 목록을 갱신해 "공식 API 연결됨"을 보여 준다
+let naverApiWatch = null;
+function watchNaverApi(id) {
+  clearInterval(naverApiWatch);
+  const until = Date.now() + 5 * 60 * 1000;
+  naverApiWatch = setInterval(() => {
+    if (!$('connectionsDialog').open || Date.now() > until || connectionCache.find((c) => c.id === id)?.naverApi?.connected) { clearInterval(naverApiWatch); naverApiWatch = null; return; }
+    if (!connectionBusy) refreshConnections().catch(() => {});
+  }, 3000);
 }
 async function openConnections() {
   $('connectionError').hidden = true;
@@ -2720,6 +2815,7 @@ async function loadTaskFiles(taskId, force = false) {
   o.sig = '';
   if (ui.view === 'outputs') renderOutputs();
   if (ui.completion?.taskId === taskId) { ui.completion.sig = ''; renderCompletion(); }
+  if (ui.thread) renderThread();
   return entry;
 }
 
@@ -2872,7 +2968,7 @@ function renderOutDetail() {
     const report = delivered.files.find((f) => f.name.startsWith('비서실장-보고') && f.name.endsWith('.md'));
     const reportBox = el('div', 'doc-box');
     if (report) { section.append(reportBox); renderFileInto(reportBox, report, { compact: true }); }
-    section.append(fileButtons(delivered.files.filter((f) => f !== report), preview));
+    section.append(fileButtons(delivered.files.filter((f) => f !== report), preview, undefined, { download: true }));
     const intermediate = el('details', 'od-sec');
     intermediate.append(el('summary', 'sub-title', '중간 작업·계획·대화 보기'));
     while (acts.nextSibling && acts.nextSibling !== preview) intermediate.append(acts.nextSibling);
@@ -2883,7 +2979,8 @@ function renderOutDetail() {
   box.replaceChildren(frag);
 }
 
-function fileButtons(list, preview, badge) {
+// download: 미리보기를 거치지 않고 바로 내려받는 버튼을 옆에 둔다(최종 전달 파일·완료 창)
+function fileButtons(list, preview, badge, { download = false } = {}) {
   const ul = el('ul', 'file-list');
   for (const f of list) {
     const li = el('li');
@@ -2900,16 +2997,75 @@ function fileButtons(list, preview, badge) {
       renderFileInto(preview, f);
       preview.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     });
+    const extra = [];
     if (fileKind(f.name) === 'html') {
-      const actions = el('div', 'file-actions');
       const open = el('button', 'btn btn-sm', '새 탭에서 열기');
       open.type = 'button'; open.setAttribute('aria-label', `${f.name} 새 탭에서 열기`);
       open.addEventListener('click', () => openHtmlTab(f));
-      actions.append(b, open); li.append(actions);
+      extra.push(open);
+    }
+    if (download) extra.push(downloadButton(f));
+    if (extra.length) {
+      const actions = el('div', 'file-actions');
+      actions.append(b, ...extra); li.append(actions);
     } else li.append(b);
     ul.append(li);
   }
   return ul;
+}
+
+function downloadButton(file) {
+  const button = el('button', 'btn btn-sm', '내려받기');
+  button.type = 'button';
+  button.setAttribute('aria-label', `${file.name} 내려받기`);
+  button.addEventListener('click', () => downloadFile(file));
+  return button;
+}
+
+// 비서실장 대화 창 아래 결과 파일: 업무가 끝나 최종산출물이 있으면 폴더를 찾지 않고 바로 내려받게 한다
+const threadFilesRequested = new Set();
+export function threadTaskId(runs) {
+  return (runs || []).map((r) => r.task).filter(Boolean).at(-1) || null;
+}
+function threadFinalFiles(taskId) {
+  if (!taskId || S.tasks.find((t) => t.id === taskId)?.status !== 'done') return null;
+  const entry = ui.out.files.get(taskId);
+  // 업무가 끝나기 전에 불러 둔 목록이면 최종산출물이 없으니 한 번 다시 불러온다
+  if (!threadFilesRequested.has(taskId) && !entry?.loading && !entry?.data?.final) {
+    threadFilesRequested.add(taskId);
+    loadTaskFiles(taskId, true);
+  }
+  return ui.out.files.get(taskId) || { loading: true };
+}
+function threadFilesNode(entry) {
+  const box = el('li', 'msg msg-files');
+  const head = el('div', 'msg-head');
+  head.append(el('b', '', '📎 결과 파일'));
+  box.append(head);
+  const files = entry?.data?.final?.files || [];
+  if (entry?.loading) { box.append(el('p', 'muted-text', '결과 파일을 불러오는 중…')); return box; }
+  if (entry?.error) { box.append(el('p', 'help', `결과 파일을 불러오지 못했어요: ${entry.error}`)); return box; }
+  if (!files.length) { box.append(el('p', 'help', '전달된 결과 파일이 없어요.')); return box; }
+  const ul = el('ul', 'dl-list');
+  for (const file of files) {
+    const item = el('li', 'dl-item');
+    item.append(el('span', `fk fk-${fileKind(file.name)}`, (/\.([a-z0-9]+)$/i.exec(file.name)?.[1] || 'file').toUpperCase().slice(0, 4)), el('span', 'dl-name', file.name));
+    if (Number.isFinite(file.size)) item.append(el('small', 'dl-size', formatSize(file.size)));
+    item.append(downloadButton(file));
+    ul.append(item);
+  }
+  box.append(ul);
+  if (files.length > 1) {
+    const all = el('button', 'btn btn-sm btn-primary', `모두 내려받기 (${files.length}개)`);
+    all.type = 'button';
+    all.addEventListener('click', async () => {
+      all.disabled = true;
+      for (const file of files) { await downloadFile(file); await new Promise((done) => setTimeout(done, 300)); }
+      all.disabled = false;
+    });
+    box.append(all);
+  }
+  return box;
 }
 
 function formatSize(n) {
@@ -3204,7 +3360,7 @@ function renderCompletion() {
   else report.replaceChildren(el('p', 'help', files?.error || '완료 보고서를 찾을 수 없습니다.'));
   const deliverables = (final?.files || []).filter((file) => file !== reportFile);
   const list = $('completionFiles');
-  list.replaceChildren(...(deliverables.length ? [...fileButtons(deliverables, preview).children]
+  list.replaceChildren(...(deliverables.length ? [...fileButtons(deliverables, preview, undefined, { download: true }).children]
     : [el('li', 'help', files?.loading ? '불러오는 중…' : final ? '별도 최종 첨부 파일은 없습니다.' : '최종 산출물을 확인할 수 없습니다.')]));
   $('completionFolder').disabled = !final;
   state.ready = Boolean(final && reportFile && !files?.error);
@@ -3451,6 +3607,20 @@ function init() {
       $('connectionSubmit').textContent = '자동 로그인 정보 저장·연결'; $('connectionCancelEdit').hidden = false;
       form.username.focus(); return;
     }
+    if (action === 'naver-api') {
+      // 팝업 차단을 피하려고 누른 즉시 새 창을 열고, 동의 주소를 받은 뒤 그 창으로 보낸다
+      const win = window.open('about:blank', '_blank'); if (win) win.opener = null;
+      connectionAction(async () => {
+        try { const { url } = await api('POST', `/api/connections/${encodeURIComponent(id)}/naver-api`); if (win) win.location.href = url; else window.location.assign(url); }
+        catch (error) { win?.close(); throw error; }
+        watchNaverApi(id);
+      });
+      return;
+    }
+    if (action === 'naver-api-off') {
+      if (!window.confirm('이 계정의 카페 공식 API 연결을 해제할까요? 카페 글은 다시 브라우저로 올립니다.')) return;
+      connectionAction(() => api('DELETE', `/api/connections/${encodeURIComponent(id)}/naver-api`)); return;
+    }
     if (action === 'remove' && !window.confirm('이 계정의 저장된 로그인 연결을 해제할까요?')) return;
     connectionAction(() => api(action === 'remove' ? 'DELETE' : 'POST', `/api/connections/${encodeURIComponent(id)}${action === 'remove' ? '' : '/' + action}`));
   });
@@ -3478,6 +3648,20 @@ function init() {
     if (d.open && !orgmapCache) loadOrgmap(d);
   }, true);
   $('chiefForm').addEventListener('submit', submitChief);
+  $('chiefAttach').addEventListener('click', () => $('chiefFiles').click());
+  $('chiefFiles').addEventListener('change', (ev) => { addChiefFiles([...ev.target.files]); ev.target.value = ''; $('chiefInput').focus(); });
+  // 지시창에 파일을 끌어다 놓아도 올릴 목록에 넣는다
+  const dropZone = $('chiefForm');
+  const hasFiles = (ev) => [...(ev.dataTransfer?.types || [])].includes('Files');
+  dropZone.addEventListener('dragover', (ev) => { if (!hasFiles(ev) || S.demo) return; ev.preventDefault(); dropZone.classList.add('is-drop'); });
+  dropZone.addEventListener('dragleave', (ev) => { if (!dropZone.contains(ev.relatedTarget)) dropZone.classList.remove('is-drop'); });
+  dropZone.addEventListener('drop', (ev) => {
+    dropZone.classList.remove('is-drop');
+    if (!hasFiles(ev) || S.demo || chiefSending) return;
+    ev.preventDefault();
+    addChiefFiles([...ev.dataTransfer.files]);
+    $('chiefInput').focus();
+  });
   for (const id of ['chiefEngine', 'chiefModel', 'chiefEffort']) $(id).addEventListener('change', saveChiefSelection);
   $('threadModel').addEventListener('change', () => {
     const latest = threadOf(S.runs, ui.thread?.rootId).at(-1);
@@ -3553,6 +3737,11 @@ function init() {
   const af = $('agentForm');
   af.addEventListener('submit', submitAgent);
   af.department.addEventListener('change', refreshAgentDeptUi);
+  af.engine.addEventListener('change', () => {
+    const dept = deptOf(af.department.value), aside = af.engine.value === 'aside' || dept?.engine === 'aside';
+    $('agentModelRow').hidden = dept?.engine === 'codex' || aside;
+    $('agentCodexFields').hidden = dept?.engine !== 'codex' || aside;
+  });
   af.codexModel.addEventListener('change', () => fillEfforts(af.codexEffort, 'codex', af.codexModel.value || deptOf(af.department.value)?.codexModel || 'gpt-6.1-sol', af.codexEffort.value, '부서 기본'));
   $('agentRole').addEventListener('change', applyRole);
   af.lead.addEventListener('change', syncLeadWarn);

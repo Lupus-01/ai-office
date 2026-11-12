@@ -15,6 +15,8 @@ import { modelCatalog } from '../lib/models.mjs';
 import { createConnectionStore, CONNECTION_PROVIDERS, CUSTOM_PROVIDER, CUSTOM_PROVIDER_INFO, validateLoginValues } from '../lib/connections.mjs';
 import { createBrowserSessions } from '../lib/browser-session.mjs';
 import { createBrowserWork } from '../lib/browser-work.mjs';
+import { asideAdvice, createAside } from '../lib/aside.mjs';
+import { createNaverCafeApi, naverApiApp } from '../lib/naver-cafe-api.mjs';
 import { createKeepAwake } from '../lib/keep-awake.mjs';
 import { createSchedules, scheduleRequest } from '../lib/schedules.mjs';
 import { collectFinalOutputs, customOutputDirectory, finalOutputs, finalOutputSettings, resolveFinalOutput, saveFinalOutputSettings } from '../lib/final-outputs.mjs';
@@ -36,12 +38,15 @@ import { historyClearIntent, taskCloseIntent } from '../lib/pause.mjs';
 import { quickCandidates } from '../lib/quick.mjs';
 import { createJudge } from '../lib/ai-judge.mjs';
 import { ensureVault } from '../lib/vault.mjs';
+import { UPLOAD_MAX_BYTES, saveUpload } from '../lib/uploads.mjs';
 import { buildState } from './state.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BODY_LIMIT = 1024 * 1024;
 // 회사 구성 가져오기는 내보낸 파일 전체(지침 포함)를 받으므로 한도를 따로 둔다. 내보내기에는 크기 제한이 없어 1MB로는 큰 회사가 왕복되지 않는다
 const IMPORT_BODY_LIMIT = 8 * 1024 * 1024;
+// 지시창 파일 올리기는 base64(4/3배)로 받는다
+const UPLOAD_BODY_LIMIT = Math.ceil(UPLOAD_MAX_BYTES * 4 / 3) + 64 * 1024;
 const LOG_TAIL_BYTES = 64 * 1024;
 const BROADCAST_DEBOUNCE_MS = 300;
 const PING_MS = 15_000;
@@ -74,7 +79,7 @@ export const HTML_PREVIEW_CSP = "sandbox; default-src 'none'; img-src data:; sty
 // 생성 HTML의 style 속성(부서색 변수) 때문에 style-src에 'unsafe-inline'을 둔다
 export const DASHBOARD_CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-src blob:; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 const NO_DESCRIPTION_WARNING = '비서실장이 배정 기준으로 쓸 설명이 없습니다. 담당 업무나 호출 설명을 채워 주세요.';
-const AGENT_FIELDS = ['id', 'name', 'department', 'title', 'lead', 'specialty', 'description', 'instructions', 'active', 'model', 'rank', 'thoughts', 'role', 'codexModel', 'codexEffort'];
+const AGENT_FIELDS = ['id', 'name', 'department', 'title', 'lead', 'specialty', 'description', 'instructions', 'active', 'model', 'rank', 'thoughts', 'role', 'codexModel', 'codexEffort', 'engine'];
 const AUTH_COOKIE = 'office_auth';
 
 class HttpError extends Error {
@@ -497,10 +502,14 @@ export async function startServer({
   if (!demo) { try { ensureVault(root); } catch (err) { warn('보관함 폴더를 만들지 못했습니다', err); } }
   const connections = createConnectionStore({ root, base: connectionBase });
   const browserSessions = createBrowserSessions({ store: connections, ...browserOptions });
-  const browserWork = createBrowserWork({ root, store: connections, sessions: browserSessions });
+  // 네이버 카페 공식 API(앱 키는 보관함/계정.env, 토큰은 연결 저장소). 브라우저 게시와 따로 쓰는 도구다
+  const cafeApi = createNaverCafeApi({ root, store: connections });
+  // Aside(브라우저 업무 권장 엔진): 설치돼 있으면 Aside 직원이 대표의 Aside 로그인으로 일하고, 실행기는 결과 화면을 다시 읽어 대조한다
+  const aside = demo ? null : createAside({ env });
+  const browserWork = createBrowserWork({ root, store: connections, sessions: browserSessions, cafeApi, aside });
   // 지시·답장 의도 판별(짧은 AI 호출). 로그인된 도구가 없으면 규칙 판별로 대신한다
   const judge = demo ? null : createJudge({ env, engine: () => tools.claude?.loggedIn === true ? 'claude' : tools.codex?.loggedIn === true ? 'codex' : null });
-  const runner = demo ? null : createRunner({ root, env, judge, toolStatus: async () => { await toolProbe; return tools; }, onChange: () => scheduleBroadcast(), outbound: browserWork, keepAwake: createKeepAwake() });
+  const runner = demo ? null : createRunner({ root, env, judge, toolStatus: async () => { await toolProbe; return tools; }, onChange: () => scheduleBroadcast(), outbound: browserWork, keepAwake: createKeepAwake(), aside });
   const schedules = demo ? null : createSchedules({ root, now: scheduleNow, runs: () => runner.list(),
     start: (request) => runner.start(request), onChange: () => scheduleBroadcast() });
 
@@ -527,6 +536,16 @@ export async function startServer({
     return out;
   }
 
+  // Aside 권장 안내(설치 여부·브라우저 업무 직원). 화면 갱신마다 이력을 읽지 않도록 30초 동안 재사용한다
+  let asideCache = { at: 0, value: null };
+  function currentAsideAdvice() {
+    if (demo) return null;
+    if (Date.now() - asideCache.at < 30000 && asideCache.value) return asideCache.value;
+    let value = null;
+    try { value = asideAdvice({ org, root, installed: aside.installed() }); } catch { value = null; }
+    asideCache = { at: Date.now(), value };
+    return value;
+  }
   function currentState() {
     const plans = currentPlans();
     const settings = loadSettings(root);
@@ -551,6 +570,7 @@ export async function startServer({
         needsLogin: connections.list().filter((c) => c.status === 'needs_login').length },
       // 경로 값은 토큰이 필요한 /api/company에서만 준다(상태는 토큰 없이 읽힌다)
       workspace: { compat, legacyPending },
+      asideAdvice: currentAsideAdvice(),
     };
   }
 
@@ -1253,6 +1273,16 @@ export async function startServer({
   }
 
   // ---- 정적 파일 ----
+  async function finishNaverApi(url, res) {
+    let ok = true, message = '공식 API 연결을 마쳤습니다. 이 창을 닫고 대시보드로 돌아가세요.';
+    try { await cafeApi.finish({ state: url.searchParams.get('state'), code: url.searchParams.get('code'), error: url.searchParams.get('error') }); }
+    catch (err) { ok = false; message = err.code === 'NAVER_API' ? err.message : '공식 API 연결을 마치지 못했습니다. 계정 연결에서 다시 시도해 주세요.'; }
+    scheduleBroadcast();
+    const page = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>네이버 공식 API 연결</title></head><body style="font-family:system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem;line-height:1.6"><h1 style="font-size:1.2rem">${ok ? '연결 완료' : '연결 실패'}</h1><p>${message.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)}</p></body></html>`;
+    res.writeHead(ok ? 200 : 400, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'" });
+    res.end(page);
+  }
+
   async function serveStatic(pathname, res) {
     let decoded;
     try {
@@ -1346,6 +1376,9 @@ export async function startServer({
 
     if (parts[0] !== 'api') {
       if (method !== 'GET' && method !== 'HEAD') throw new HttpError(405, '허용되지 않은 메서드입니다.');
+      // 네이버 로그인 동의를 마친 브라우저가 돌아오는 주소. 한 번 쓰는 state로 이 대시보드가 시작한 요청인지 확인한다
+      const naverApp = demo ? null : naverApiApp(root);
+      if (naverApp && url.pathname === new URL(naverApp.callback).pathname) return finishNaverApi(url, res);
       return serveStatic(url.pathname, res);
     }
 
@@ -1359,7 +1392,7 @@ export async function startServer({
       }
       if (parts.length === 2 && parts[1] === 'connections') {
         checkToken(req);
-        return sendJson(res, 200, { connections: demo ? [] : connections.list(), providers: [...Object.entries(CONNECTION_PROVIDERS).map(([id, p]) => ({ id, name: p.name, services: p.services })), { id: CUSTOM_PROVIDER, name: CUSTOM_PROVIDER_INFO.name, services: [], custom: true }] });
+        return sendJson(res, 200, { connections: demo ? [] : browserWork.connections(), naverApiConfigured: !demo && cafeApi.configured(), providers: [...Object.entries(CONNECTION_PROVIDERS).map(([id, p]) => ({ id, name: p.name, services: p.services })), { id: CUSTOM_PROVIDER, name: CUSTOM_PROVIDER_INFO.name, services: [], custom: true }] });
       }
       if (parts.length === 2 && parts[1] === 'schedules') {
         checkToken(req);
@@ -1409,8 +1442,16 @@ export async function startServer({
     if (method !== 'POST' && method !== 'PUT' && method !== 'DELETE') throw new HttpError(405, '허용되지 않은 메서드입니다.');
     checkMutation(req);
     const isImport = method === 'POST' && parts.length === 3 && parts[1] === 'org' && parts[2] === 'import';
-    const body = await readBody(req, isImport ? IMPORT_BODY_LIMIT : BODY_LIMIT);
+    const isUpload = method === 'POST' && parts.length === 2 && parts[1] === 'uploads';
+    const body = await readBody(req, isImport ? IMPORT_BODY_LIMIT : isUpload ? UPLOAD_BODY_LIMIT : BODY_LIMIT);
     const [, resource, id, action] = parts;
+
+    // 지시창에서 올린 파일: 작업 공간 보관함/업로드/<날짜>/에 저장하고 지시문에 붙일 경로를 돌려준다
+    if (isUpload) {
+      if (demo) throw new HttpError(409, '데모 모드에서는 파일을 올릴 수 없습니다.');
+      try { return sendJson(res, 201, saveUpload(root, body)); }
+      catch (error) { if (error.status) throw new HttpError(error.status, error.message); throw error; }
+    }
 
     if (resource === 'history' && method === 'DELETE' && parts.length === 2) return sendJson(res, 200, clearHistory());
 
@@ -1465,7 +1506,11 @@ export async function startServer({
         } else if (method === 'POST' && parts.length === 4 && parts[3] === 'open') result = await browserSessions.open(id);
         else if (method === 'POST' && parts.length === 4 && parts[3] === 'confirm') result = await browserSessions.confirm(id);
         else if (method === 'PUT' && parts.length === 3) result = connections.saveCredentials(id, body);
-        else if (method === 'DELETE' && parts.length === 3) { await browserSessions.disconnect(id); result = { removed: true }; }
+        else if (method === 'DELETE' && parts.length === 3) { await browserSessions.disconnect(id); cafeApi.disconnect(id); result = { removed: true }; }
+        else if (parts.length === 4 && parts[3] === 'naver-api' && ['POST', 'DELETE'].includes(method)) {
+          if (connections.find(id).provider !== 'naver') throw new HttpError(400, '공식 API는 네이버 계정에만 연결합니다.');
+          result = method === 'POST' ? cafeApi.start(id) : cafeApi.disconnect(id);
+        }
         else throw new HttpError(404, '계정 연결 작업을 찾을 수 없습니다.');
       } catch (error) { throw new HttpError(error.status || 400, error.code === 'CONNECTION_REQUIRED' ? error.message : redact(error.message)); }
       scheduleBroadcast(); return sendJson(res, 200, result);

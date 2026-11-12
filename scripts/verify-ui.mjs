@@ -18,6 +18,9 @@ mkdirSync(dirname(reportPath), { recursive: true, mode: 0o700 });
 const root = mkdtempSync(join(tmpdir(), 'office-browser-'));
 const connectionBase = mkdtempSync(join(tmpdir(), 'office-ui-auth-'));
 mkdirSync(join(root, 'org'));
+// 네이버 카페 공식 API 앱 키(가짜 값): 네이버 계정 카드에 "카페 공식 API 연결" 버튼이 보여야 한다
+mkdirSync(join(root, '보관함'), { recursive: true });
+writeFileSync(join(root, '보관함/계정.env'), 'NAVER_API_CLIENT=fixture-client\nNAVER_API_SECRET=fixture-secret\nNAVER_API_CALLBACK=http://localhost:4777/oauth/naver/callback\n', { mode: 0o600 });
 writeFileSync(join(root, 'org/departments.json'), JSON.stringify([
   { id: 'research', name: '리서치부', engine: 'claude', capabilities: ['자료조사'], color: '#38bdf8' },
   { id: 'dev', name: '개발부', engine: 'codex', codexRole: 'exec', capabilities: ['HTML'], color: '#34d399' },
@@ -166,6 +169,25 @@ try {
   assert.equal(await page.locator('#agentForm select[name="codexEffort"]').inputValue(), 'high');
   report.checks.push({ name: '직원 Codex 모델·effort 저장 후 수정 화면 유지', interaction: 'click', passed: true });
   await page.keyboard.press('Escape');
+  // 직원 엔진: 브라우저 업무 직원만 Aside로 바꾸고(모델 칸은 숨김), 다시 부서 설정으로 되돌린다
+  await page.locator('[data-act="edit-agent"][data-id="research-1"]').first().click();
+  await page.locator('#agentForm .select-trigger[data-select="engine"]').click();
+  await popup().getByRole('option', { name: /Aside/ }).click();
+  assert.equal(await page.locator('#agentForm select[name="engine"]').inputValue(), 'aside');
+  const modelHidden = await page.locator('#agentModelRow').isHidden();
+  check('Aside 엔진이면 Claude 모델 칸을 숨김', 'click', () => assert.equal(modelHidden, true));
+  await shot('staff-engine-aside.png');
+  await page.locator('#agentSubmit').click();
+  await page.waitForFunction(() => !document.querySelector('#agentDialog').open);
+  await saved((s) => s.agents['research-1']?.engine === 'aside');
+  await page.locator('[data-act="edit-agent"][data-id="research-1"]').first().click();
+  assert.equal(await page.locator('#agentForm select[name="engine"]').inputValue(), 'aside');
+  await page.locator('#agentForm .select-trigger[data-select="engine"]').click();
+  await popup().getByRole('option', { name: /부서 설정 따름/ }).click();
+  await page.locator('#agentSubmit').click();
+  await page.waitForFunction(() => !document.querySelector('#agentDialog').open);
+  await saved((s) => !s.agents['research-1']?.engine);
+  report.checks.push({ name: '직원 엔진 Aside 저장·되돌리기', interaction: 'click', passed: true });
   await page.locator('#addDeptBtn').click();
   await page.locator('#deptForm .select-trigger[data-select="handoffPolicy"]').click();
   await popup().getByRole('option', { name: /필수/ }).click();
@@ -330,6 +352,20 @@ try {
   assert.equal(await page.locator('#connectionPassword').inputValue(), '');
   await page.waitForFunction(() => !document.querySelector('[data-connection-action="confirm"]'), null, { timeout: 20000 });
   await page.getByText(/자동 로그인 저장됨/).waitFor();
+  // 카페 공식 API 연결: 누르면 새 창이 네이버 동의 주소(PKCE)로 열린다. 실제 네이버에는 접속하지 않는다
+  await page.context().route('https://nid.naver.com/**', (route) => route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>naver</title>' }));
+  const apiButton = page.locator('[data-connection-action="naver-api"]');
+  assert.equal(await apiButton.count(), 1, '네이버 계정에만 공식 API 연결 버튼이 있다');
+  assert.equal((await apiButton.textContent()).trim(), '카페 공식 API 연결');
+  const [consent] = await Promise.all([page.context().waitForEvent('page'), apiButton.click()]);
+  await consent.waitForURL(/^https:\/\/nid\.naver\.com\/oauth2\/authorize\?/);
+  const consentUrl = new URL(consent.url());
+  assert.equal(consentUrl.searchParams.get('code_challenge_method'), 'S256');
+  assert.equal(consentUrl.searchParams.get('client_id'), 'fixture-client');
+  assert.equal(consentUrl.searchParams.has('client_secret'), false);
+  await consent.close();
+  assert.equal(await page.locator('#connectionError').isHidden(), true);
+  report.checks.push({ name: '카페 공식 API 연결 버튼이 네이버 동의 창(PKCE)을 연다', interaction: 'click', passed: true });
   await shot('connections-desktop.png');
   await page.setViewportSize({ width: 390, height: 844 });
   await page.locator('#connectionProvider').locator('..').scrollIntoViewIfNeeded();

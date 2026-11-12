@@ -82,7 +82,9 @@ function fixture(t, options = {}) {
           stages: [stage('a', 'marketing', 'research-1', []), stage('b', 'dev', 'dev-1', ['a'])],
           review: { by: options.reviewBy || 'chief', criteria: '근거와 산출물을 확인한다' }, gaps: [] };
         if (options.workspaceInput) plan.stages[0].inputs = ['.office/simulation-inputs/market.json'];
-        if (options.publication) plan.publications = [{ id: 'publish', action: 'post', service: 'naver_blog', connection: '', agent: 'dev-1', target: 'https://blog.naver.com/fixture', recipients: [], subject: '자료', content: 'b' }];
+        if (options.publication) plan.publications = [options.publication === 'cafe'
+          ? { id: 'publish', action: 'post', service: 'naver_cafe', connection: '', agent: 'dev-1', target: 'https://cafe.naver.com/f-e/cafes/1/menus/2', recipients: [], subject: '자료', content: 'b' }
+          : { id: 'publish', action: 'post', service: 'naver_blog', connection: '', agent: 'dev-1', target: 'https://blog.naver.com/fixture', recipients: [], subject: '자료', content: 'b' }];
         if (options.siteStage) Object.assign(plan.stages[0], { connection: 'erp-1', target: 'https://erp.example.com/erp' });
         if (options.webPublication) plan.publications = [{ id: 'upload', action: 'web', service: 'web', connection: 'erp-1', agent: 'dev-1', target: 'https://erp.example.com/erp/proposal-pages', recipients: [], subject: '', content: '', instructions: '업체 ai-office-test를 추가하고 HTML을 업로드한다', files: ['b'] }];
         if (options.independent) plan.stages.push(stage('c', 'dev', 'dev-1', []));
@@ -1054,6 +1056,72 @@ test('게시 중 로그인이 풀리면 로그인 창을 열고, 로그인하면
   assert.equal(opened.length, 0);
 });
 
+test('업무 시작 로그인 확인: 저장 상태가 연결됨이어도 실제로 풀렸으면 계획 전에 로그인 창을 열고, 로그인돼 있으면 창 없이 진행한다', async (t) => {
+  const connected = () => [{ id: 'n1', label: '네이버', provider: 'naver', status: 'connected' }];
+  let accounts = connected(), live = 'needs_login', login = () => ({ status: 'connected', id: 'n1' });
+  const checks = [], opened = [], delivered = [];
+  let planAtOpen = null, f;
+  const outbound = { connections: () => accounts,
+    // 실제 실행기처럼: 로그인이 풀린 창을 열면 계정이 needs_login이 된다
+    async checkLogin(args) { checks.push(args); if (live === 'needs_login') accounts = [{ ...accounts[0], status: 'needs_login' }]; return { status: live }; },
+    requestLogin: async (args) => { opened.push(args); planAtOpen = f.counts.plan; const r = login(); if (r.status === 'connected') { accounts = connected(); live = 'connected'; } return r; },
+    async deliver(args) { delivered.push(args); return { status: 'confirmed', resultUrl: 'https://blog.naver.com/x/1' }; } };
+  f = fixture(t, { publication: true, outbound });
+  const done = await f.final(f.runner.start({ prompt: 'https://blog.naver.com/fixture 블로그에 글 게시해 줘. 끝까지 자동으로' }));
+  assert.equal(done.needsReply, false, '지시 직후 로그인하면 답장 없이 끝까지 간다');
+  assert.deepEqual(checks.map((c) => [c.connection, c.target]), [['n1', 'https://blog.naver.com/fixture']], '지시의 주소를 연결 계정 창으로 한 번 확인한다');
+  assert.deepEqual(opened.map((o) => [o.provider, o.connection]), [['naver', 'n1']]);
+  assert.equal(planAtOpen, 0, '계획·작성 전에(대표가 자리에 있을 때) 로그인 창을 연다');
+  assert.equal(delivered.length, 1);
+
+  // 실제로 로그인돼 있으면 로그인 창 없이 진행한다
+  accounts = connected(); live = 'connected'; checks.length = 0; opened.length = 0; delivered.length = 0;
+  f = fixture(t, { publication: true, outbound });
+  assert.equal((await f.final(f.runner.start({ prompt: 'https://blog.naver.com/fixture 블로그에 글 게시해 줘. 끝까지 자동으로' }))).needsReply, false);
+  assert.equal(checks.length, 1);
+  assert.equal(opened.length, 0);
+  assert.equal(delivered.length, 1);
+
+  // 기다리는 동안 로그인하지 않으면 기다린 시간을 알려 주고 묻는다(작성은 시작하지 않는다)
+  accounts = connected(); live = 'needs_login'; login = () => ({ status: 'timeout', id: 'n1', minutes: 30 });
+  f = fixture(t, { publication: true, outbound });
+  const late = f.runner.start({ prompt: 'https://blog.naver.com/fixture 블로그에 글 게시해 줘. 끝까지 자동으로' });
+  assert.equal((await f.final(late)).needsReply, true);
+  assert.match(f.runner.result(late.id).text, /30분 안에 [\s\S]*로그인이 끝나지 않았습니다/);
+  assert.equal(f.counts.plan, 0);
+
+  // 확인하지 못하면(브라우저 오류 등) 막지 않고 기존 흐름대로 진행한다
+  accounts = connected(); live = 'unknown'; opened.length = 0; delivered.length = 0;
+  f = fixture(t, { publication: true, outbound });
+  assert.equal((await f.final(f.runner.start({ prompt: 'https://blog.naver.com/fixture 블로그에 글 게시해 줘. 끝까지 자동으로' }))).needsReply, false);
+  assert.equal(opened.length, 0);
+  assert.equal(delivered.length, 1);
+});
+
+test('카페 공식 API: 시작 전 로그인 창을 열지 않고, 실패는 자동 재시도 없이 묻고, "브라우저로 진행"이면 브라우저로 다시 보낸다', async (t) => {
+  // 브라우저 로그인은 풀려 있어도(needs_login) 공식 API가 연결돼 있으면 카페 글은 API로 올린다
+  const accounts = [{ id: 'n1', label: '네이버', provider: 'naver', status: 'needs_login', naverApi: { configured: true, connected: true } }];
+  const opened = [], delivered = [];
+  const outbound = { connections: () => accounts,
+    requestLogin: async (args) => { opened.push(args); return { status: 'connected', id: 'n1' }; },
+    async deliver(args) {
+      delivered.push(args);
+      if (!args.viaBrowser) throw Object.assign(new Error('공식 API가 글쓰기를 거부했습니다(HTTP 403, 코드 999). 브라우저(Playwright)로 대신 올리려면 “브라우저로 진행”이라고 답해 주세요.'), { code: 'NAVER_API', kind: 'request' });
+      return { status: 'confirmed', resultUrl: 'https://cafe.naver.com/a/1' };
+    } };
+  const f = fixture(t, { publication: 'cafe', outbound });
+  const first = f.runner.start({ prompt: 'https://cafe.naver.com/f-e/cafes/1/menus/2 카페에 글 게시해 줘. 끝까지 자동으로' });
+  assert.equal((await f.final(first)).needsReply, true);
+  assert.equal(opened.length, 0, '시작 전·실패 뒤 모두 로그인 창을 열지 않는다');
+  assert.equal(delivered.length, 1, 'API 실패를 자동으로 다시 보내거나 브라우저로 바꾸지 않는다');
+  assert.equal(delivered[0].viaBrowser, false);
+  assert.match(f.runner.result(first.id).text, /브라우저로 진행/);
+  const second = await f.final(f.runner.reply(first.id, { prompt: '브라우저로 진행' }));
+  assert.equal(second.needsReply, false);
+  assert.equal(delivered.length, 2);
+  assert.equal(delivered[1].viaBrowser, true, '대표가 고른 경우에만 브라우저로 보낸다');
+});
+
 test('필요한 계정이 없으면 작업 전에 묻고, 등록 뒤 이어서 진행한다(웹사이트 계정은 계획을 다시 세운다)', async (t) => {
   let accounts = [];
   const delivered = [];
@@ -1280,4 +1348,32 @@ test('검토 루프: 검증실은 계획의 검토 기준을, 비서실장은 �
   assert.equal(loadTasks(f.root)[0].status, 'done');
   assert.match(f.calls.find((c) => c.kind === 'reviewer').input, /검토 기준: 근거와 산출물을 확인한다[\s\S]*기술·사실 확인에 집중/);
   assert.match(f.calls.find((c) => c.kind === 'review').input, /검증실이 이미 확인한 항목은 다시 검토하지 말고/);
+});
+
+test('지시에 적은 작업 공간 문서(지시창에서 올린 파일 포함)는 앞부분을 연락처를 가려 계획에 넣는다', async (t) => {
+  const { createRequire } = await import('node:module');
+  const docx = createRequire(import.meta.url)('docx');
+  const f = fixture(t);
+  const cell = (text) => new docx.TableCell({ children: [new docx.Paragraph(text)] });
+  const word = new docx.Document({ sections: [{ children: [new docx.Table({ rows: [
+    new docx.TableRow({ children: [cell('아호(예명)'), cell('가상별')] }),
+    new docx.TableRow({ children: [cell('휴대폰 번호'), cell('010-1234-5678')] }),
+  ] })] }] });
+  const bytes = await docx.Packer.toBuffer(word);
+  mkdirSync(join(f.root, '보관함', '업로드', '2026-11-12'), { recursive: true });
+  writeFileSync(join(f.root, '보관함', '업로드', '2026-11-12', '상담사 프로필(원본).docx'), bytes);
+  // 숨김 폴더의 문서는 지시에 적혀 있어도 읽지 않는다
+  mkdirSync(join(f.root, '보관함', '.숨김'), { recursive: true });
+  writeFileSync(join(f.root, '보관함', '.숨김', '비밀.docx'), bytes);
+  await f.final(f.runner.start({ prompt: '프로필 작성해 줘\n\n[업로드한 파일]\n- 보관함/업로드/2026-11-12/상담사 프로필(원본).docx\n- 보관함/.숨김/비밀.docx' }));
+  const plan = f.calls.find((c) => c.kind === 'plan').input;
+  assert.match(plan, /지시에 적힌 문서의 앞부분/);
+  assert.match(plan, /\[보관함\/업로드\/2026-11-12\/상담사 프로필\(원본\)\.docx\]\n아호\(예명\)\n가상별\n휴대폰 번호\n\[가림\]/, '공백·괄호가 든 경로도 찾는다');
+  assert.ok(!plan.includes('010-1234-5678'), '연락처는 계획에 들어가지 않는다');
+  assert.ok(!plan.includes('[보관함/.숨김/비밀.docx]'), '숨김 폴더 문서는 읽지 않는다');
+
+  // 문서가 없는 지시는 미리보기 칸을 넣지 않는다
+  const g = fixture(t);
+  await g.final(g.runner.start({ prompt: '자료를 조사해 줘' }));
+  assert.doesNotMatch(g.calls.find((c) => c.kind === 'plan').input, /지시에 적힌 문서의 앞부분/);
 });

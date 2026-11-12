@@ -49,11 +49,17 @@ test('사용자가 지시한 작업만 허용하고 이후 금지·재발송·�
   assert.equal(externalActionPolicy(['미발송 확인, 재발송']).retryUncertain, true);
   assert.equal(externalActionPolicy(['발송됐음 확인']).confirmExisting, true);
   assert.equal(externalActionPolicy(['미발송 확인, 재발송']).confirmExisting, false);
+  // 공식 API 실패 뒤 브라우저(Playwright) 우회를 고른 답만 viaBrowser다
+  for (const text of ['브라우저로 진행', '브라우저로 올려줘', '플레이라이트로 해', 'Playwright로 진행']) assert.equal(externalActionPolicy([text]).viaBrowser, true, text);
+  for (const text of ['진행', '브라우저로 하지 마', '플레이라이트 말고 API로']) assert.equal(externalActionPolicy([text]).viaBrowser, false, text);
   // 사이트에서 본 결과를 자연스럽게 말한 답도 확인으로 보고, 아직 안 올라갔다는 말과 질문은 확인이 아니다
-  for (const text of ['글은 올라가 있는데 나머지 글 2건은 안올라와있어 2건 마저 올리고 보고해줘', '카페에 잘 올라왔어', '글 게시돼 있어', '다 올라갔네', '올라간 내용 확인은 했어', '게시된 글 확인했어']) {
+  for (const text of ['글은 올라가 있는데 나머지 글 2건은 안올라와있어 2건 마저 올리고 보고해줘', '카페에 잘 올라왔어', '글 게시돼 있어', '다 올라갔네', '올라간 내용 확인은 했어', '게시된 글 확인했어',
+    '올라왔지만 사진이 깨졌어', '올라왔는지 물어봤지? 카페에 올라와 있어']) {
     assert.equal(externalActionPolicy([text]).confirmExisting, true, text);
   }
-  for (const text of ['아직 안 올라왔어', '글이 안올라가 있어', '못 올라갔어', '글이 올라갔는지 봐줘', '카페에 올라와 있나요?', '미게시 확인, 재게시', '올라간 거 확인해 줘', '안 올라간 거 확인했어']) {
+  // 물음표로 끝나는 질문과 뒤에서 부정한 말은 확인이 아니다
+  for (const text of ['아직 안 올라왔어', '글이 안올라가 있어', '못 올라갔어', '글이 올라갔는지 봐줘', '카페에 올라와 있나요?', '미게시 확인, 재게시', '올라간 거 확인해 줘', '안 올라간 거 확인했어',
+    '올라왔어?', '카페에 올라갔어？', '카페에 올라가 있지 않아', '글이 게시돼 있지 않아요', '올라왔냐', '올라간 거 확인했어?']) {
     assert.equal(externalActionPolicy([text]).confirmExisting, false, text);
   }
 });
@@ -151,11 +157,46 @@ test('requestLogin: 없는 연결을 만들어 창을 열고 로그인 완료·�
   assert.equal((await work.requestLogin({ provider: 'naver', pollMs: 1 })).status, 'closed');
   assert.equal(store.list().length, 1, '있는 연결을 다시 쓴다');
   onOpen = () => {};
-  assert.equal((await work.requestLogin({ provider: 'naver', pollMs: 1, timeoutMs: 10 })).status, 'timeout');
+  const late = await work.requestLogin({ provider: 'naver', pollMs: 1, timeoutMs: 10 });
+  assert.deepEqual([late.status, late.minutes], ['timeout', 1], '시간 초과에는 기다린 분을 함께 돌려준다');
   const web = await work.requestLogin({ target: 'https://erp.example.com/a', pollMs: 1, timeoutMs: 10 });
   assert.equal(store.list().find((c) => c.id === web.id).provider, 'web');
   const stop = new AbortController(); stop.abort();
   await assert.rejects(work.requestLogin({ provider: 'naver', pollMs: 1, signal: stop.signal }));
+});
+
+test('checkLogin: 저장 상태가 아니라 실제 화면으로 로그인을 확인하고, 로그인 문제만 needs_login으로 알린다', async (t) => {
+  const { createBrowserWork } = await import('../lib/browser-work.mjs');
+  const { ConnectionRequired, AccountProtected, LOGIN_WAIT_MS } = await import('../lib/browser-session.mjs');
+  assert.equal(LOGIN_WAIT_MS, 30 * 60 * 1000, '지시하고 자리를 비워도 돌아와 로그인할 수 있게 30분 기다린다');
+  const temp = mkdtempSync(join(tmpdir(), 'office-login-check-')), root = join(temp, 'workspace'); mkdirSync(root);
+  t.after(() => rmSync(temp, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
+  const store = createConnectionStore({ root, base: join(temp, 'private') });
+  const naver = store.create({ provider: 'naver', label: '네이버' });
+  store.update(naver.id, { status: 'connected' });
+  const visited = [];
+  let outcome = async () => {};
+  const sessions = { withSession: async (id, url, signal, action) => { visited.push([id, url]); await outcome(); return action({}); } };
+  const work = createBrowserWork({ root, store, sessions });
+  const cafe = 'https://cafe.naver.com/petdilab';
+  assert.equal((await work.checkLogin({ connection: naver.id, target: cafe })).status, 'connected');
+  assert.deepEqual(visited, [[naver.id, cafe]], '연결 계정 창으로 지시의 주소를 실제로 연다');
+  outcome = async () => { throw new ConnectionRequired('로그인이 만료됐습니다.'); };
+  assert.equal((await work.checkLogin({ connection: naver.id, target: cafe })).status, 'needs_login');
+  // 계정 보호·브라우저 오류는 로그인 창으로 풀 수 없으니 여기서 막지 않고 게시 단계가 기존대로 다룬다
+  outcome = async () => { throw new AccountProtected(); };
+  assert.equal((await work.checkLogin({ connection: naver.id, target: cafe })).status, 'unknown');
+  outcome = async () => { throw new Error('브라우저를 시작하지 못했습니다.'); };
+  assert.equal((await work.checkLogin({ connection: naver.id, target: cafe })).status, 'unknown');
+  // 다른 서비스 주소나 없는 연결은 열지 않는다
+  visited.length = 0;
+  assert.equal((await work.checkLogin({ connection: naver.id, target: 'https://example.com/' })).status, 'unknown');
+  assert.equal((await work.checkLogin({ connection: 'missing', target: cafe })).status, 'unknown');
+  assert.equal(visited.length, 0);
+  // 중지하면 확인 결과로 바꾸지 않고 그대로 멈춘다
+  const stop = new AbortController(); stop.abort();
+  outcome = async () => { throw new ConnectionRequired(); };
+  await assert.rejects(work.checkLogin({ connection: naver.id, target: cafe, signal: stop.signal }));
 });
 
 test('글 본문 나누기: 유튜브·네이버 지도 링크만 따로 떼고 순서를 지키며 다른 링크는 글에 둔다', async () => {
@@ -175,4 +216,11 @@ test('글 본문 나누기: 유튜브·네이버 지도 링크만 따로 떼고 
   for (const other of ['https://cafe.naver.com/petdilab', 'https://blog.naver.com/a/1', 'https://map.naver.com.evil.example/a', 'https://mynaver.me/a']) {
     assert.equal(bodySegments(`참고 ${other}`).filter((s) => s.card).length, 0, other);
   }
+  // 장소 카드 링크(API로는 카드가 생기지 않아 브라우저로 올릴 글)만 따로 가린다. 유튜브·일반 링크는 아니다
+  const { hasPlaceCardLink } = await import('../lib/browser-work.mjs');
+  assert.equal(hasPlaceCardLink('장소\n\nhttps://map.naver.com/p/entry/place/1'), true);
+  assert.equal(hasPlaceCardLink('영상\n\nhttps://youtu.be/AbCdEfGhI_1 그리고 https://naver.me/AbCd1234'), true);
+  assert.equal(hasPlaceCardLink(`영상\n\n${y}`), false);
+  assert.equal(hasPlaceCardLink('참고 https://cafe.naver.com/petdilab'), false);
+  assert.equal(hasPlaceCardLink(''), false);
 });
