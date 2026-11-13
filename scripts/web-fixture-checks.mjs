@@ -1,11 +1,12 @@
 // 일반 웹사이트 업무(자유 입력·파일 첨부·되돌리기 어려운 버튼·결과 증표)를 로컬 가짜 관리자 사이트에서만 검증한다.
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from 'playwright';
+import ExcelJS from 'exceljs';
 import { createConnectionStore } from '../lib/connections.mjs';
 import { createBrowserWork } from '../lib/browser-work.mjs';
 
@@ -23,6 +24,21 @@ const GRID = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>
 <script>const total=445,h=30,grid=document.getElementById('grid'),inner=document.getElementById('inner');inner.style.height=(total*h)+'px';
 const draw=()=>{const first=Math.floor(grid.scrollTop/h);inner.innerHTML='';for(let i=first;i<Math.min(total,first+13);i++){const r=document.createElement('div');r.className='row';r.tabIndex=-1;r.style.top=(i*h)+'px';r.textContent='경고'+(i+1)+' 최근접속 2026-09-'+String(i%28+1).padStart(2,'0');inner.append(r);}};
 grid.addEventListener('scroll',draw);draw();</script></body></html>`;
+// 화면에는 메일이 없고 내려받는 엑셀에만 있는 실적 화면(가상 예명·주소)
+const FILES = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>개인 상담사 실적 관리</title></head><body>
+<table><tbody><tr><td>가상별</td><td>매출 1,200</td></tr></tbody></table>
+<a href="/export.xlsx">엑셀 다운로드</a><button id="csv">CSV 내려받기</button><a href="/tool.exe">설치 파일</a>
+<button id="noop">새로고침</button><button id="save">저장</button><a href="https://outside.example.invalid/x.xlsx">외부 엑셀</a>
+<script>document.getElementById('csv').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([['예명,메일','가상달,dal@example.invalid',''].join(String.fromCharCode(10))],{type:'text/csv'}));a.download='목록.csv';a.click();};
+document.getElementById('save').onclick=()=>fetch('/save',{method:'POST'});</script></body></html>`;
+// 탭으로 나뉜 상세 분석 창: 위·아래 줄은 탭마다 같고 가운데만 바뀐다
+const TABS = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>상담사 상세 분석</title></head><body>
+<h1>상담사 상세 분석</h1><p>가상별 · 1단계</p>
+<button data-tab="요약: 상담 5건">요약</button><button data-tab="고객 관리: 단골 3명">고객 관리</button><button data-tab="후기 분석: 후기 2건">후기 분석</button>
+<button id="save">저장</button>
+<div id="panel">요약: 상담 5건</div><p>기준 2026-11-01</p>
+<script>for(const b of document.querySelectorAll('[data-tab]'))b.onclick=()=>{document.getElementById('panel').textContent=b.dataset.tab;};
+document.getElementById('save').onclick=()=>fetch('/save',{method:'POST'});</script></body></html>`;
 const HTML = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>가짜 관리자 화면</title></head><body>
 <h1>제휴 제안 페이지</h1>
 <label>업체 코드<input name="code"></label><button id="add">업체 추가</button><button id="del">삭제</button>
@@ -49,7 +65,15 @@ export async function verifyWebWork() {
     site = createServer(async (req, res) => {
       const url = new URL(req.url, 'http://x');
       if (req.method === 'POST') { let body = ''; for await (const c of req) body += c; events.push({ path: url.pathname, query: Object.fromEntries(url.searchParams), body }); res.end('ok'); return; }
-      res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(url.pathname === '/list' ? LIST : url.pathname === '/grid' ? GRID : HTML);
+      if (url.pathname === '/export.xlsx') {
+        const workbook = new ExcelJS.Workbook(); const sheet = workbook.addWorksheet('실적');
+        sheet.addRow(['예명', '메일']); sheet.addRow(['가상별', 'gasang@example.invalid']);
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent('상담사 실적.xlsx')}`);
+        res.end(Buffer.from(await workbook.xlsx.writeBuffer())); return;
+      }
+      if (url.pathname === '/tool.exe') { res.setHeader('Content-Type', 'application/octet-stream'); res.setHeader('Content-Disposition', 'attachment; filename="tool.exe"'); res.end('MZ'); return; }
+      res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(url.pathname === '/list' ? LIST : url.pathname === '/grid' ? GRID : url.pathname === '/files' ? FILES : url.pathname === '/tabs' ? TABS : HTML);
     });
     await new Promise((resolve) => site.listen(0, '127.0.0.1', resolve));
     const origin = `http://127.0.0.1:${site.address().port}`;
@@ -165,10 +189,68 @@ export async function verifyWebWork() {
       return ids.size;
     } });
     assert.equal(seen, 445, '표 안쪽 스크롤로 보이지 않던 행까지 모두 읽는다');
-    return [{ name: '일반 웹사이트: 자유 입력·지정 파일 첨부·되돌리기 어려운 버튼 submit·결과 캡처 증표', interaction: 'click', passed: true },
+    // 파일 내려받기: 조회 단계에서만, 연결 사이트의 자료 파일만 업무 폴더 downloads/에 받고 엑셀·CSV는 글자 파일로 푼다
+    const toolCall = (url, token) => async (name, args = {}) => {
+      const res = await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ name, arguments: args }) });
+      const data = await res.json(); if (data.error) throw new Error(`${name}: ${data.code} ${data.error}`); return data.result;
+    };
+    const downloadDir = join(taskDir, 'downloads');
+    const got = await broker.browse({ connection: account.id, target: `${origin}/files`, signal: new AbortController().signal, downloadDir, downloadTimeoutMs: 1500, execute: async ({ url, token }) => {
+      const call = toolCall(url, token);
+      const r = Object.fromEntries((await call('browser_snapshot')).frames.flatMap((f) => f.controls).map((c) => [c.label, c.ref]));
+      const excel = await call('browser_download', { ref: r['엑셀 다운로드'] });
+      const again = await call('browser_download', { ref: r['엑셀 다운로드'] });
+      const csv = await call('browser_download', { ref: r['CSV 내려받기'] });
+      await assert.rejects(call('browser_download', { ref: r['설치 파일'] }), /받을 수 있는 파일은/);
+      await assert.rejects(call('browser_download', { ref: r['새로고침'] }), /내려받아지지 않았습니다/);
+      await assert.rejects(call('browser_download', { ref: r['저장'] }), /읽기 전용/);
+      await assert.rejects(call('browser_download', { ref: r['외부 엑셀'] }), /연결 서비스 밖/);
+      // 도구를 거치지 않은 클릭으로 시작된 내려받기는 저장되지 않는다
+      await call('browser_click', { ref: r['엑셀 다운로드'] });
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      return { excel, again, csv };
+    } });
+    const base = 'outputs/2026-11-03/web-fixture/downloads/';
+    assert.equal(got.excel.saved, `${base}상담사 실적.xlsx`);
+    assert.equal(got.excel.text, `${base}상담사 실적.xlsx.txt`);
+    assert.ok(readFileSync(join(root, got.excel.text), 'utf8').includes(['예명', '메일'].join('\t') + '\n' + ['가상별', 'gasang@example.invalid'].join('\t')), '엑셀을 탭으로 푼 글자 파일');
+    assert.equal(got.again.saved, `${base}상담사 실적 (2).xlsx`, '같은 이름은 덮어쓰지 않는다');
+    assert.equal(got.csv.saved, `${base}목록.csv`);
+    assert.match(readFileSync(join(root, got.csv.text), 'utf8'), /가상달,dal@example\.invalid/);
+    assert.deepEqual(readdirSync(downloadDir).sort(), ['목록.csv', '목록.csv.txt', '상담사 실적 (2).xlsx', '상담사 실적 (2).xlsx.txt', '상담사 실적.xlsx', '상담사 실적.xlsx.txt'], '거부·취소된 파일은 남지 않는다');
+    assert.ok(!events.some((e) => e.path === '/save'), '내려받기 도구로 저장 버튼을 누를 수 없다');
+    // 받을 폴더가 없는 조회와 외부 작업 단계에서는 쓸 수 없다
+    await broker.browse({ connection: account.id, target: `${origin}/files`, signal: new AbortController().signal, execute: async ({ url, token }) => {
+      const call = toolCall(url, token);
+      const r = Object.fromEntries((await call('browser_snapshot')).frames.flatMap((f) => f.controls).map((c) => [c.label, c.ref]));
+      await assert.rejects(call('browser_download', { ref: r['엑셀 다운로드'] }), /사이트 조회 단계에서만/);
+    } });
+    await assert.rejects(broker.deliver({ scope: 'fixture-download', publication: { ...publication('dl'), target: `${origin}/files` }, body: instructions, allowedActions: ['web'], instructionKey: 'k9',
+      evidenceDir, signal: new AbortController().signal, execute: async ({ url, token }) => {
+        const call = toolCall(url, token);
+        const r = Object.fromEntries((await call('browser_snapshot')).frames.flatMap((f) => f.controls).map((c) => [c.label, c.ref]));
+        await call('browser_download', { ref: r['엑셀 다운로드'] });
+      } }), /사이트 조회 단계에서만/);
+    // 여러 탭 한 번에 읽기: 이름·ref로 차례로 누르고, 탭마다 같은 위·아래 줄은 한 번만 돌려주며, 쓰기 버튼·없는 이름은 건너뛴다
+    const tabs = await broker.browse({ connection: account.id, target: `${origin}/tabs`, signal: new AbortController().signal, execute: async ({ url, token }) => {
+      const call = toolCall(url, token);
+      const r = Object.fromEntries((await call('browser_snapshot')).frames.flatMap((f) => f.controls).map((c) => [c.label, c.ref]));
+      await assert.rejects(call('browser_collect', { steps: [] }), /steps/);
+      await assert.rejects(call('browser_collect', { steps: Array.from({ length: 9 }, () => '요약') }), /steps/);
+      return call('browser_collect', { steps: [r['고객 관리'], '후기 분석', '저장', '없는 탭', '요약'] });
+    } });
+    assert.deepEqual(tabs.views.map((v) => v.text ?? `건너뜀:${v.skipped}`), ['고객 관리: 단골 3명', '후기 분석: 후기 2건', '건너뜀:읽기 전용 조회에서 누를 수 없는 버튼입니다.', '건너뜀:화면에서 이 이름의 탭·버튼을 찾지 못했습니다.', '요약: 상담 5건']);
+    assert.match(tabs.sharedTop, /상담사 상세 분석\n가상별 · 1단계/);
+    assert.equal(tabs.sharedBottom, '기준 2026-11-01');
+    assert.ok(!events.some((e) => e.path === '/save'), '한 번에 읽기 도구로도 저장 버튼은 누르지 않는다');
+    await assert.rejects(broker.deliver({ scope: 'fixture-collect', publication: { ...publication('collect'), target: `${origin}/tabs` }, body: instructions, allowedActions: ['web'], instructionKey: 'k10',
+      evidenceDir, signal: new AbortController().signal, execute: async ({ url, token }) => { await toolCall(url, token)('browser_collect', { steps: ['요약'] }); } }), /조회 단계에서만/);
+    return [{ name: '사이트 조회 단계: 여러 탭을 한 번에 읽기(이름·ref), 반복되는 위·아래 줄 묶기, 쓰기 버튼 건너뛰기', interaction: 'click', passed: true },
+      { name: '일반 웹사이트: 자유 입력·지정 파일 첨부·되돌리기 어려운 버튼 submit·결과 캡처 증표', interaction: 'click', passed: true },
       { name: '일반 웹사이트: 삭제·외부 링크·허용 밖 이동·목록 밖 첨부 차단, 재실행·불확실 재시도 차단', interaction: 'click', passed: true },
       { name: '사이트 조회 단계: 읽기 전용 검색·정렬, 긴 목록 이어 읽기, 저장·제출·첨부 차단', interaction: 'click', passed: true },
-      { name: '사이트 조회 단계: 보이는 행만 그리는 표를 안쪽 스크롤로 끝까지 읽기', interaction: 'scroll', passed: true }];
+      { name: '사이트 조회 단계: 보이는 행만 그리는 표를 안쪽 스크롤로 끝까지 읽기', interaction: 'scroll', passed: true },
+      { name: '사이트 조회 단계: 엑셀·CSV 내려받기와 글자 파일 풀기, 실행 파일·외부 파일·저장 버튼·조회 밖 단계 차단', interaction: 'click', passed: true }];
   } finally {
     await broker?.close(); await browser?.close(); site?.close();
     await rm(temp, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });

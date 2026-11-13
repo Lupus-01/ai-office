@@ -50,6 +50,14 @@ export function checkpointFile(root, rootId) {
   return join(root, '.office', 'orchestrations', `${rootId}.json`);
 }
 
+// 직원의 needs_decision 응답에서 대표에게 보여 줄 글: 이유(summary)와 질문(question·questions)
+export function staffQuestion(result) {
+  const questions = [result?.question, ...(Array.isArray(result?.questions) ? result.questions : [])].map((q) => String(q || '').trim()).filter(Boolean);
+  const summary = String(result?.summary || '').trim();
+  const parts = [summary && !questions.includes(summary) ? summary : '', ...questions].filter(Boolean);
+  return (parts.join('\n') || String(result?.reason || '').trim()).slice(0, 2000);
+}
+
 export async function orchestrate({ root, run, prompt, execute: runAI, signal, maxParallel = 4, resume = false, onDecision = () => {}, outbound = null, intent = null, judge = null, home = homedir(), sourceCheck = checkSources, wait = waitFor, notes = [], engineOf = null }) {
   const task = run.task;
   const taskDir = join(root, 'outputs', ...task.split('/'));
@@ -168,6 +176,12 @@ export async function orchestrate({ root, run, prompt, execute: runAI, signal, m
     return { ...base, actions: [...actions], delegated };
   };
   const allowedActions = () => policy().actions;
+  // 외부 작업 직원에게 알려 줄 대표의 답(최근 3개)과 재발송 지시 여부
+  const decisionNote = () => {
+    const answers = state.decisions.map((d) => String(d.answer || '').trim()).filter(Boolean).slice(-3);
+    if (!answers.length) return '';
+    return `대표가 이 업무에서 추가로 답한 내용: ${JSON.stringify(answers)}. 앞서 같은 이유로 멈춰 대표에게 물었다면 이 답을 따르고 같은 질문을 되풀이하지 마세요.${policy().allowResend ? ' 대표가 재발송·재게시를 지시했으므로, 같은 받는 사람·제목의 이전 발송이 보여도 중복으로 보고 멈추지 말고 이번 원문을 실행하세요.' : ''}`;
+  };
   const persist = () => {
     state.budget.activeMs = activeMs();
     mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
@@ -613,7 +627,7 @@ export async function orchestrate({ root, run, prompt, execute: runAI, signal, m
     if (asideRun && ASIDE_BINARY.test(stage.output)) return { stage, result: { status: 'replan', reason: `Aside 직원은 ${stage.output.split('.').at(-1)} 파일을 만들지 않습니다. 이 단계(${stage.id})는 파일을 만드는 다른 직원에게 배정하거나 md·json 산출물로 바꾸세요.` } };
     const runStage = (args) => asideRun ? execute(args) : !site ? execute(args)
       : publicWeb ? (outbound?.browsePublic ? outbound.browsePublic({ target: stage.target, signal, execute: (browser) => execute({ ...args, browser }) }) : execute(args))
-      : outbound?.browse ? outbound.browse({ connection: stage.connection, target: stage.target, signal, execute: (browser) => execute({ ...args, browser }) })
+      : outbound?.browse ? outbound.browse({ connection: stage.connection, target: stage.target, signal, downloadDir: join(taskDir, 'downloads'), execute: (browser) => execute({ ...args, browser }) })
         : Promise.reject(Object.assign(new Error('사이트 조회를 위해 계정 연결을 먼저 완료해 주세요.'), { code: 'CONNECTION_REQUIRED' }));
     for (let attempt = 0; attempt < 2; attempt++) {
       checkStop();
@@ -632,7 +646,7 @@ export async function orchestrate({ root, run, prompt, execute: runAI, signal, m
           '완료 기준을 채우면 바로 끝내세요. 기준에 없는 추가 조사·확인은 하지 않습니다.',
         ].filter(Boolean) : [
           publicWeb ? `공개 웹 조회: 로그인 없는 브라우저(office_browser 도구)로 ${stage.target}에서 시작해 화면을 읽으세요. WebSearch·WebFetch도 함께 쓸 수 있습니다. 읽기 전용이라 입력·등록은 하지 않습니다. 유튜브 숏츠의 조회수는 /shorts/영상ID 화면에 글자로 나오지 않으니 /watch?v=영상ID로 열어 읽으세요. 결과는 출력 파일에 직접 작성하세요. 영상 내용처럼 글자로 확인할 수 없는 항목은 미확인으로 적으세요.` : '',
-          site && !publicWeb ? `사이트 조회: 연결 계정 브라우저(office_browser 도구)로 ${stage.target}에서 시작해 필요한 자료를 조회하세요. 읽기 전용이라 저장·등록·수정·삭제는 하지 않습니다. 대표 요청의 의도에 맞는 메뉴·탭·필터를 사이트를 둘러보며 스스로 찾아 쓰고(대표가 범위를 정했으면 그 범위의 자료만 엽니다. 예: 특정 회원의 글이면 작성자 검색·필터를 먼저 쓰고 공지·다른 게시판은 열지 않음), 목록은 browser_text의 offset으로 끝까지 읽으세요. 결과는 출력 파일에 직접 작성하고, 대표가 요구한 항목(연락처 등)은 빠뜨리지 마세요. 조건에 맞는 항목이 없으면 그 사실과 확인한 화면·조건을 출력 파일에 적으세요. 이 단계에서는 연결 사이트 밖(웹 검색·다른 사이트)은 볼 수 없습니다. 그런 자료는 다른 단계가 맡으니 사이트 안 자료만 정리하고, 사이트 밖 자료가 없다는 이유로 대표에게 묻지 마세요.` : '',
+          site && !publicWeb ? `사이트 조회: 연결 계정 브라우저(office_browser 도구)로 ${stage.target}에서 시작해 필요한 자료를 조회하세요. 읽기 전용이라 저장·등록·수정·삭제는 하지 않습니다. 대표 요청의 의도에 맞는 메뉴·탭·필터를 사이트를 둘러보며 스스로 찾아 쓰고(대표가 범위를 정했으면 그 범위의 자료만 엽니다. 예: 특정 회원의 글이면 작성자 검색·필터를 먼저 쓰고 공지·다른 게시판은 열지 않음), 목록은 browser_text의 offset으로 끝까지 읽으세요. 같은 창의 탭 여러 개를 읽을 때는 하나씩 누르지 말고 browser_collect에 탭 이름을 한 번에 적어 읽으세요. 화면에 없고 파일로만 받을 수 있는 자료(엑셀 다운로드 등)는 그 버튼을 browser_download로 누르면 이 업무 폴더의 downloads/에 저장됩니다. 엑셀·CSV는 글자 파일(.txt)로도 풀어 주니 결과의 text 경로를 Read로 읽으세요. 결과는 출력 파일에 직접 작성하고, 대표가 요구한 항목(연락처 등)은 빠뜨리지 마세요. 조건에 맞는 항목이 없으면 그 사실과 확인한 화면·조건을 출력 파일에 적으세요. 이 단계에서는 연결 사이트 밖(웹 검색·다른 사이트)은 볼 수 없습니다. 그런 자료는 다른 단계가 맡으니 사이트 안 자료만 정리하고, 사이트 밖 자료가 없다는 이유로 대표에게 묻지 마세요.` : '',
           mailDraft ? '이번 산출물은 메일 문안 JSON입니다. 입력 조사 자료의 회사별 연락처·출처를 확인하고 대표 양식을 채운 messages:[{recipients:[주소],subject,body}]와 skipped:[미확인 업체·이유]를 작성하세요. 실제 메일은 지금 보내지 않습니다.' : '',
           canRunScripts(stage.dept) ? officeGuide({ output: stage.output, program: programRoot() }) : '',
           html ? `${HTML_BRIEF}\nHTML 보고서 기본 양식: ${join(programRoot(), 'org/templates/report.html')}. 읽어서 정보 구조·스타일을 참고하고 업무에 맞게 작성하세요. {{REPORT_*}} 빈 항목은 모두 채우거나 불필요한 섹션과 함께 제거하세요. 근거가 없으면 꾸미기 위해 숫자·차트를 만들지 마세요.` : '',
@@ -1015,6 +1029,8 @@ export async function orchestrate({ root, run, prompt, execute: runAI, signal, m
                 ].join('\n\n') : ['대표가 이번 업무에서 지시하고 비서실장이 검토한 외부 작업을 실행합니다. 아래 원문의 내용과 대상을 바꾸지 마세요.',
                   // 이번 한 건만 알려 준다(여러 수신자 문안이 든 파일 경로를 주면 다른 사람 메일과 헷갈린다)
                   `이번 작업 한 건: ${JSON.stringify({ 종류: publication.action, 대상: publication.target, ...(publication.recipients?.length ? { 받는사람: publication.recipients } : {}), ...(publication.subject ? { 제목: publication.subject } : {}), ...(publication.targetTitle ? { 대상글제목: publication.targetTitle } : {}), ...(publication.targetAuthor ? { 대상글작성자: publication.targetAuthor } : {}) })}`,
+                  // 직원이 멈춰 대표가 답한 뒤 다시 실행할 때, 그 답을 직원이 알아야 같은 질문을 되풀이하지 않는다
+                  decisionNote(),
                   publication.action === 'comment' ? `댓글은 대상 글 화면의 댓글 입력칸이 본문 칸입니다(제목·받는사람 칸 없음). 입력칸이 보이지 않으면 화면을 내리거나 댓글 영역을 연 뒤 다시 읽으세요.${publication.targetTitle || publication.targetAuthor ? ' 화면의 글 제목·작성자가 위 대상 글과 다르면 등록하지 말고 needs_decision으로 보고하세요.' : ''}` : '',
                   `본문 앞부분(확인용): ${JSON.stringify(String(body).slice(0, 80))}… 본문 전체는 browser_fill_content(field:"body")가 그대로 넣으니 파일을 읽거나 직접 타이핑하지 마세요.`,
                   attachments.length ? `첨부할 파일(browser_attach의 file 값): ${attachments.map((a) => a.name).join(', ')}. 받는사람·제목·본문을 넣은 뒤 파일 첨부 칸 또는 "파일 첨부"·"내 PC" 같은 버튼의 ref로 browser_attach를 파일마다 호출하고, 화면의 첨부 목록에 파일 이름이 보이는지 확인한 다음 보내세요. 첨부가 빠지면 browser_submit이 거부합니다. 첨부 한도 초과 등으로 붙이지 못하면 보내지 말고 needs_decision으로 보고하세요.` : '',
@@ -1026,7 +1042,8 @@ export async function orchestrate({ root, run, prompt, execute: runAI, signal, m
                 // Aside 직원의 보고(눌렀는지·결과 주소)는 실행기가 결과 화면과 함께 판단하므로 그대로 넘긴다
                 if (engine === 'aside') return text;
                 const result = stageResult(text);
-                if (['needs_decision', 'replan'].includes(result.status)) throw new Error(result.question || result.reason || '외부 작업에 필요한 계정·권한을 확인해 주세요.');
+                // 직원이 멈춘 이유와 질문을 그대로 대표에게 보여 준다(질문을 questions 배열·summary로 보내는 직원도 있다)
+                if (['needs_decision', 'replan'].includes(result.status)) throw new Error(staffQuestion(result) || '외부 작업에 필요한 계정·권한을 확인해 주세요.');
                 return text;
               } });
             publications.push(web ? `- 웹사이트 작업 ${publication.target}: ${result.confirmedBy === 'user' ? '사용자 확인 완료' : result.method === 'aside' ? 'Aside 직원 확인 완료' : '직원 확인 완료'}${result.resultUrl ? ` · ${result.resultUrl}` : ''}${result.evidence ? ` · 증거 evidence/${result.evidence}` : ''}${result.summary ? `\n  - 확인 내용: ${redactContext(result.summary)}` : ''}`
