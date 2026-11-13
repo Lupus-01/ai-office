@@ -50,6 +50,14 @@ export function checkpointFile(root, rootId) {
   return join(root, '.office', 'orchestrations', `${rootId}.json`);
 }
 
+// 직원의 needs_decision 응답에서 대표에게 보여 줄 글: 이유(summary)와 질문(question·questions)
+export function staffQuestion(result) {
+  const questions = [result?.question, ...(Array.isArray(result?.questions) ? result.questions : [])].map((q) => String(q || '').trim()).filter(Boolean);
+  const summary = String(result?.summary || '').trim();
+  const parts = [summary && !questions.includes(summary) ? summary : '', ...questions].filter(Boolean);
+  return (parts.join('\n') || String(result?.reason || '').trim()).slice(0, 2000);
+}
+
 export async function orchestrate({ root, run, prompt, execute: runAI, signal, maxParallel = 4, resume = false, onDecision = () => {}, outbound = null, intent = null, judge = null, home = homedir(), sourceCheck = checkSources, wait = waitFor, notes = [], engineOf = null }) {
   const task = run.task;
   const taskDir = join(root, 'outputs', ...task.split('/'));
@@ -168,6 +176,12 @@ export async function orchestrate({ root, run, prompt, execute: runAI, signal, m
     return { ...base, actions: [...actions], delegated };
   };
   const allowedActions = () => policy().actions;
+  // 외부 작업 직원에게 알려 줄 대표의 답(최근 3개)과 재발송 지시 여부
+  const decisionNote = () => {
+    const answers = state.decisions.map((d) => String(d.answer || '').trim()).filter(Boolean).slice(-3);
+    if (!answers.length) return '';
+    return `대표가 이 업무에서 추가로 답한 내용: ${JSON.stringify(answers)}. 앞서 같은 이유로 멈춰 대표에게 물었다면 이 답을 따르고 같은 질문을 되풀이하지 마세요.${policy().allowResend ? ' 대표가 재발송·재게시를 지시했으므로, 같은 받는 사람·제목의 이전 발송이 보여도 중복으로 보고 멈추지 말고 이번 원문을 실행하세요.' : ''}`;
+  };
   const persist = () => {
     state.budget.activeMs = activeMs();
     mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
@@ -1015,6 +1029,8 @@ export async function orchestrate({ root, run, prompt, execute: runAI, signal, m
                 ].join('\n\n') : ['대표가 이번 업무에서 지시하고 비서실장이 검토한 외부 작업을 실행합니다. 아래 원문의 내용과 대상을 바꾸지 마세요.',
                   // 이번 한 건만 알려 준다(여러 수신자 문안이 든 파일 경로를 주면 다른 사람 메일과 헷갈린다)
                   `이번 작업 한 건: ${JSON.stringify({ 종류: publication.action, 대상: publication.target, ...(publication.recipients?.length ? { 받는사람: publication.recipients } : {}), ...(publication.subject ? { 제목: publication.subject } : {}), ...(publication.targetTitle ? { 대상글제목: publication.targetTitle } : {}), ...(publication.targetAuthor ? { 대상글작성자: publication.targetAuthor } : {}) })}`,
+                  // 직원이 멈춰 대표가 답한 뒤 다시 실행할 때, 그 답을 직원이 알아야 같은 질문을 되풀이하지 않는다
+                  decisionNote(),
                   publication.action === 'comment' ? `댓글은 대상 글 화면의 댓글 입력칸이 본문 칸입니다(제목·받는사람 칸 없음). 입력칸이 보이지 않으면 화면을 내리거나 댓글 영역을 연 뒤 다시 읽으세요.${publication.targetTitle || publication.targetAuthor ? ' 화면의 글 제목·작성자가 위 대상 글과 다르면 등록하지 말고 needs_decision으로 보고하세요.' : ''}` : '',
                   `본문 앞부분(확인용): ${JSON.stringify(String(body).slice(0, 80))}… 본문 전체는 browser_fill_content(field:"body")가 그대로 넣으니 파일을 읽거나 직접 타이핑하지 마세요.`,
                   attachments.length ? `첨부할 파일(browser_attach의 file 값): ${attachments.map((a) => a.name).join(', ')}. 받는사람·제목·본문을 넣은 뒤 파일 첨부 칸 또는 "파일 첨부"·"내 PC" 같은 버튼의 ref로 browser_attach를 파일마다 호출하고, 화면의 첨부 목록에 파일 이름이 보이는지 확인한 다음 보내세요. 첨부가 빠지면 browser_submit이 거부합니다. 첨부 한도 초과 등으로 붙이지 못하면 보내지 말고 needs_decision으로 보고하세요.` : '',
@@ -1026,7 +1042,8 @@ export async function orchestrate({ root, run, prompt, execute: runAI, signal, m
                 // Aside 직원의 보고(눌렀는지·결과 주소)는 실행기가 결과 화면과 함께 판단하므로 그대로 넘긴다
                 if (engine === 'aside') return text;
                 const result = stageResult(text);
-                if (['needs_decision', 'replan'].includes(result.status)) throw new Error(result.question || result.reason || '외부 작업에 필요한 계정·권한을 확인해 주세요.');
+                // 직원이 멈춘 이유와 질문을 그대로 대표에게 보여 준다(질문을 questions 배열·summary로 보내는 직원도 있다)
+                if (['needs_decision', 'replan'].includes(result.status)) throw new Error(staffQuestion(result) || '외부 작업에 필요한 계정·권한을 확인해 주세요.');
                 return text;
               } });
             publications.push(web ? `- 웹사이트 작업 ${publication.target}: ${result.confirmedBy === 'user' ? '사용자 확인 완료' : result.method === 'aside' ? 'Aside 직원 확인 완료' : '직원 확인 완료'}${result.resultUrl ? ` · ${result.resultUrl}` : ''}${result.evidence ? ` · 증거 evidence/${result.evidence}` : ''}${result.summary ? `\n  - 확인 내용: ${redactContext(result.summary)}` : ''}`

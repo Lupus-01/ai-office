@@ -7,6 +7,7 @@ import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createRunner } from '../dashboard/runner.mjs';
+import { staffQuestion } from '../dashboard/orchestrator.mjs';
 import { loadSettings, saveSettings } from '../lib/settings.mjs';
 import { loadTasks, updateTask } from '../lib/tasks.mjs';
 import { ConnectionRequired } from '../lib/browser-session.mjs';
@@ -1380,4 +1381,14 @@ test('지시에 적은 작업 공간 문서(지시창에서 올린 파일 포함
   const g = fixture(t);
   await g.final(g.runner.start({ prompt: '자료를 조사해 줘' }));
   assert.doesNotMatch(g.calls.find((c) => c.kind === 'plan').input, /지시에 적힌 문서의 앞부분/);
+});
+
+test('외부 작업 직원이 멈춘 이유와 질문을 그대로 대표에게 보여 준다', () => {
+  // 질문을 questions 배열과 summary로 보낸 응답(실제 사례: 같은 제목의 메일이 이미 보낸메일함에 있음)
+  assert.equal(staffQuestion({ status: 'needs_decision', summary: '같은 제목의 메일이 이미 발송돼 멈췄습니다.', questions: ['1. 수정판을 한 번 더 보낼까요? (권장 기본값: 보내지 않음)'] }),
+    '같은 제목의 메일이 이미 발송돼 멈췄습니다.\n1. 수정판을 한 번 더 보낼까요? (권장 기본값: 보내지 않음)');
+  assert.equal(staffQuestion({ status: 'needs_decision', question: '로그인이 필요합니다.', summary: '로그인이 필요합니다.' }), '로그인이 필요합니다.', '같은 문장은 한 번만');
+  assert.equal(staffQuestion({ status: 'replan', reason: '도구가 없습니다.' }), '도구가 없습니다.');
+  assert.equal(staffQuestion({ status: 'needs_decision' }), '', '내용이 없으면 호출한 쪽의 기본 문구를 쓴다');
+  assert.equal(staffQuestion({ status: 'needs_decision', summary: '가'.repeat(3000) }).length, 2000);
 });

@@ -83,3 +83,12 @@ test('상시 업무 사용량 이상 기준: 평소의 3배·10회 이상, 최�
   const { USAGE_ANOMALY } = await import('../lib/guardrails.mjs');
   assert.deepEqual({ ...USAGE_ANOMALY }, { ratio: 3, baselineDays: 7, minBaselineDays: 2, minCalls: 10 });
 });
+
+test('재발송 지시: "수정판 한 번 더 보내줘" 같은 말도 재발송으로 읽고, 하지 말라는 말은 읽지 않는다', () => {
+  for (const yes of ['수정판 한 번 더 보내줘', '한 번 더 발송해줘', '수정본 보내줘', '수정판으로 다시 발송', '재발송해줘']) {
+    assert.equal(externalActionPolicy(['메일 보내줘', yes]).allowResend, true, yes);
+  }
+  for (const no of ['수정판 보내지 마', '한 번 더 보내지 마', '한 번 더 발송하지 마', '수정본 발송하지 마', '보내지 마', '진행']) {
+    assert.equal(externalActionPolicy(['메일 보내줘', no]).allowResend, false, no);
+  }
+});
