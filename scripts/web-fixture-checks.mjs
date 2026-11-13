@@ -31,6 +31,14 @@ const FILES = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title
 <button id="noop">새로고침</button><button id="save">저장</button><a href="https://outside.example.invalid/x.xlsx">외부 엑셀</a>
 <script>document.getElementById('csv').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([['예명,메일','가상달,dal@example.invalid',''].join(String.fromCharCode(10))],{type:'text/csv'}));a.download='목록.csv';a.click();};
 document.getElementById('save').onclick=()=>fetch('/save',{method:'POST'});</script></body></html>`;
+// 탭으로 나뉜 상세 분석 창: 위·아래 줄은 탭마다 같고 가운데만 바뀐다
+const TABS = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>상담사 상세 분석</title></head><body>
+<h1>상담사 상세 분석</h1><p>가상별 · 1단계</p>
+<button data-tab="요약: 상담 5건">요약</button><button data-tab="고객 관리: 단골 3명">고객 관리</button><button data-tab="후기 분석: 후기 2건">후기 분석</button>
+<button id="save">저장</button>
+<div id="panel">요약: 상담 5건</div><p>기준 2026-11-01</p>
+<script>for(const b of document.querySelectorAll('[data-tab]'))b.onclick=()=>{document.getElementById('panel').textContent=b.dataset.tab;};
+document.getElementById('save').onclick=()=>fetch('/save',{method:'POST'});</script></body></html>`;
 const HTML = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>가짜 관리자 화면</title></head><body>
 <h1>제휴 제안 페이지</h1>
 <label>업체 코드<input name="code"></label><button id="add">업체 추가</button><button id="del">삭제</button>
@@ -65,7 +73,7 @@ export async function verifyWebWork() {
         res.end(Buffer.from(await workbook.xlsx.writeBuffer())); return;
       }
       if (url.pathname === '/tool.exe') { res.setHeader('Content-Type', 'application/octet-stream'); res.setHeader('Content-Disposition', 'attachment; filename="tool.exe"'); res.end('MZ'); return; }
-      res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(url.pathname === '/list' ? LIST : url.pathname === '/grid' ? GRID : url.pathname === '/files' ? FILES : HTML);
+      res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(url.pathname === '/list' ? LIST : url.pathname === '/grid' ? GRID : url.pathname === '/files' ? FILES : url.pathname === '/tabs' ? TABS : HTML);
     });
     await new Promise((resolve) => site.listen(0, '127.0.0.1', resolve));
     const origin = `http://127.0.0.1:${site.address().port}`;
@@ -223,7 +231,22 @@ export async function verifyWebWork() {
         const r = Object.fromEntries((await call('browser_snapshot')).frames.flatMap((f) => f.controls).map((c) => [c.label, c.ref]));
         await call('browser_download', { ref: r['엑셀 다운로드'] });
       } }), /사이트 조회 단계에서만/);
-    return [{ name: '일반 웹사이트: 자유 입력·지정 파일 첨부·되돌리기 어려운 버튼 submit·결과 캡처 증표', interaction: 'click', passed: true },
+    // 여러 탭 한 번에 읽기: 이름·ref로 차례로 누르고, 탭마다 같은 위·아래 줄은 한 번만 돌려주며, 쓰기 버튼·없는 이름은 건너뛴다
+    const tabs = await broker.browse({ connection: account.id, target: `${origin}/tabs`, signal: new AbortController().signal, execute: async ({ url, token }) => {
+      const call = toolCall(url, token);
+      const r = Object.fromEntries((await call('browser_snapshot')).frames.flatMap((f) => f.controls).map((c) => [c.label, c.ref]));
+      await assert.rejects(call('browser_collect', { steps: [] }), /steps/);
+      await assert.rejects(call('browser_collect', { steps: Array.from({ length: 9 }, () => '요약') }), /steps/);
+      return call('browser_collect', { steps: [r['고객 관리'], '후기 분석', '저장', '없는 탭', '요약'] });
+    } });
+    assert.deepEqual(tabs.views.map((v) => v.text ?? `건너뜀:${v.skipped}`), ['고객 관리: 단골 3명', '후기 분석: 후기 2건', '건너뜀:읽기 전용 조회에서 누를 수 없는 버튼입니다.', '건너뜀:화면에서 이 이름의 탭·버튼을 찾지 못했습니다.', '요약: 상담 5건']);
+    assert.match(tabs.sharedTop, /상담사 상세 분석\n가상별 · 1단계/);
+    assert.equal(tabs.sharedBottom, '기준 2026-11-01');
+    assert.ok(!events.some((e) => e.path === '/save'), '한 번에 읽기 도구로도 저장 버튼은 누르지 않는다');
+    await assert.rejects(broker.deliver({ scope: 'fixture-collect', publication: { ...publication('collect'), target: `${origin}/tabs` }, body: instructions, allowedActions: ['web'], instructionKey: 'k10',
+      evidenceDir, signal: new AbortController().signal, execute: async ({ url, token }) => { await toolCall(url, token)('browser_collect', { steps: ['요약'] }); } }), /조회 단계에서만/);
+    return [{ name: '사이트 조회 단계: 여러 탭을 한 번에 읽기(이름·ref), 반복되는 위·아래 줄 묶기, 쓰기 버튼 건너뛰기', interaction: 'click', passed: true },
+      { name: '일반 웹사이트: 자유 입력·지정 파일 첨부·되돌리기 어려운 버튼 submit·결과 캡처 증표', interaction: 'click', passed: true },
       { name: '일반 웹사이트: 삭제·외부 링크·허용 밖 이동·목록 밖 첨부 차단, 재실행·불확실 재시도 차단', interaction: 'click', passed: true },
       { name: '사이트 조회 단계: 읽기 전용 검색·정렬, 긴 목록 이어 읽기, 저장·제출·첨부 차단', interaction: 'click', passed: true },
       { name: '사이트 조회 단계: 보이는 행만 그리는 표를 안쪽 스크롤로 끝까지 읽기', interaction: 'scroll', passed: true },
