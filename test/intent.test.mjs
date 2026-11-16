@@ -95,6 +95,11 @@ test('상시 실행(멈출 때까지·기간·종료 시각)과 예약(매일·1
   assert.equal((await judgeCommand('뉴스 정리해 줘', { now: NOW, judge: ai({ scheduleTime: '09:00', scheduleEvidence: '매일 9시' }) })).schedule, null);
   assert.equal((await judgeCommand('어제 9시에 정리해 줘', { now: NOW, judge: ai({ scheduleTime: '09:00', scheduleDate: '2026-11-02', scheduleTimes: 1, scheduleEvidence: '어제 9시에' }) })).schedule, null);
   assert.deepEqual((await judgeCommand('매일 9시에 정리해 줘', { now: NOW, judge: ai({ scheduleTime: '09:00', scheduleTimes: 999, scheduleEvidence: '매일 9시에' }) })).schedule, { time: '09:00' });
+  // 요일 반복은 판별 응답(요일 칸 없음)이 매일로 답해도 규칙 판별의 요일·시각을 쓴다. 판별이 놓쳐도 규칙으로 잡는다
+  const weekly = await judgeCommand('매주 금요일 오후 1시에 상담사 데이터를 갱신해줘', { now: NOW, judge: ai({ scheduleTime: '13:00', scheduleTimes: 0, scheduleEvidence: '매주 금요일 오후 1시에' }) });
+  assert.deepEqual(weekly.schedule, { time: '13:00', weekdays: [5] });
+  const missed = await judgeCommand('매주 월·목 오전 9시에 보고해 줘', { now: NOW, judge: ai({}) });
+  assert.deepEqual(missed.schedule, { time: '09:00', weekdays: [1, 4] });
 });
 
 test('AI 판별이 실패하거나 형식이 틀리면 기존 규칙 판별로 대신한다', async () => {

@@ -150,3 +150,38 @@ test('일시중지 후 다시 켜기는 회차를 새로 세지 않고 남은 �
   f.set('2026-10-30T03:00:00Z'); const back = store.update(item.id, { enabled: true });
   assert.deepEqual([back.nextAt, back.untilDate], ['2026-10-31T02:00:00.000Z', '2026-10-31']);
 });
+
+test('요일 반복 예약 문장: "매주 금요일 오후 1시에"·여러 요일·범위를 읽고 요일이 아닌 말은 예약으로 보지 않는다', () => {
+  const now = Date.parse('2026-11-16T14:00:00+09:00'); // 월요일
+  assert.deepEqual(scheduleRequest('매주 금요일 오후 1시에 상담사 데이터를 갱신해줘', now), { time: '13:00', weekdays: [5] });
+  assert.deepEqual(scheduleRequest('매주 월·수·금 오전 9시에 보고해 줘', now), { time: '09:00', weekdays: [1, 3, 5] });
+  assert.deepEqual(scheduleRequest('매주 월요일과 목요일 18:30에 정리해 줘', now), { time: '18:30', weekdays: [1, 4] });
+  assert.deepEqual(scheduleRequest('매주 월~금 오전 8시에 요약해 줘', now), { time: '08:00', weekdays: [1, 2, 3, 4, 5] });
+  assert.deepEqual(scheduleRequest('매주 일요일마다 오후 9시에 정리해 줘', now), { time: '21:00', weekdays: [0] });
+  assert.deepEqual(scheduleRequest('11월 20일부터 매주 금요일 오후 1시에 보고해', now), { time: '13:00', weekdays: [5], startDate: '2026-11-20' });
+  assert.equal(scheduleRequest('매주 목표 점검 자료를 만들어 줘', now), null);
+  assert.throws(() => scheduleRequest('매주 금요일에 카페 글 올려줘', now), /시각/);
+  assert.throws(() => scheduleRequest('매주 금요일 오후 1시에 5회 반복 실행해 줘', now), /횟수/);
+});
+
+test('요일 반복 예약은 그 요일에만 실행하고 다음 같은 요일로 넘어간다. 횟수와 함께 쓰면 거부한다', async (t) => {
+  const f = await fixture(t); const store = createSchedules(f.options); // 지금: 2026-10-30(금) 10:59(한국)
+  const friday = store.add({ prompt: '매주 금요일 오후 1시에 상담사 데이터를 갱신해줘' });
+  assert.deepEqual([friday.time, friday.weekdays, friday.times, friday.untilDate, friday.nextAt], ['13:00', [5], null, null, '2026-10-30T04:00:00.000Z']);
+  const monday = store.add({ time: '09:00', weekdays: [1], prompt: '주간 보고' });
+  assert.equal(monday.nextAt, '2026-11-02T00:00:00.000Z');
+  assert.throws(() => store.add({ time: '09:00', weekdays: [1], times: 3, prompt: '횟수와 요일' }), /횟수/);
+  assert.throws(() => store.add({ time: '09:00', weekdays: [7], prompt: '없는 요일' }), /요일/);
+  assert.throws(() => store.add({ prompt: '매주 금요일 오후 1시에 상담사 데이터를 갱신해줘' }), /이미 있습니다/);
+  f.set('2026-10-30T04:00:00Z'); store.tick(); assert.equal(f.started.length, 1);
+  assert.equal(store.list().find((x) => x.id === friday.id).nextAt, '2026-11-06T04:00:00.000Z');
+  f.history[0].status = 'done';
+  f.set('2026-10-31T04:00:00Z'); store.tick(); assert.equal(f.started.length, 1); // 토요일은 실행하지 않는다
+  // 일시중지·재개는 요일을 그대로 두고, 요일을 바꾸면 다음 시각을 새로 정한다
+  store.update(friday.id, { enabled: false }); store.update(friday.id, { enabled: true });
+  assert.deepEqual(store.list().find((x) => x.id === friday.id).weekdays, [5]);
+  const moved = store.update(friday.id, { weekdays: [2] });
+  assert.equal(moved.nextAt, '2026-11-03T04:00:00.000Z');
+  const daily = store.update(friday.id, { weekdays: null });
+  assert.equal(daily.weekdays, null); assert.equal(daily.nextAt, '2026-11-01T04:00:00.000Z');
+});

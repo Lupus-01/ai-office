@@ -458,6 +458,10 @@
             <input type="date" id="scheduleDate"></div>
             <div><label for="scheduleTimes">횟수 <span class="help-inline">1이면 한 번, 비우면 매일 계속</span></label>
             <input type="number" id="scheduleTimes" min="1" max="365" step="1" inputmode="numeric" placeholder="매일 계속"></div>
+            <div><span class="field-label">요일 <span class="help-inline">고르면 매주 그 요일, 비우면 매일</span></span>
+            <div id="scheduleWeekdays" class="schedule-weekdays" role="group" aria-label="반복 요일">
+              <label><input type="checkbox" value="1">월</label><label><input type="checkbox" value="2">화</label><label><input type="checkbox" value="3">수</label><label><input type="checkbox" value="4">목</label><label><input type="checkbox" value="5">금</label><label><input type="checkbox" value="6">토</label><label><input type="checkbox" value="0">일</label>
+            </div></div>
           </div>
           <label for="schedulePrompt">업무 지시</label>
           <textarea id="schedulePrompt" rows="4" maxlength="4000" required placeholder="예: 연결한 계정으로 지정 카페 게시판에 여행 주제의 유튜브 숏츠를 찾아 하루 2~3개씩 소개 글을 게시해 줘. 게시판 주소와 원하는 글 형식도 적어 주세요."></textarea>

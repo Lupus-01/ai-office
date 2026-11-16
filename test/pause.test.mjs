@@ -53,6 +53,8 @@ test('지시창 안내는 일시정지·재개 결과 건수를 알려 준다', 
 test('예약 안내는 1회·N회·매일을 구분해 보여 준다', () => {
   assert.equal(scheduleLabel({ time: '10:00', startDate: '2026-11-04', times: 1 }), '11월 4일 10:00 한 번');
   assert.equal(scheduleLabel({ time: '10:00', times: 1, nextAt: '2026-11-04T01:00:00.000Z' }), '11월 4일 10:00 한 번');
+  assert.equal(scheduleLabel({ time: '13:00', weekdays: [5] }), '매주 금요일 13:00');
+  assert.equal(scheduleLabel({ time: '09:00', weekdays: [1, 3, 5], startDate: '2026-11-20' }), '매주 월·수·금요일 09:00(11월 20일부터)');
   assert.equal(scheduleLabel({ time: '09:00', times: 3, untilDate: '2026-11-06' }), '매일 09:00 · 3회(11월 6일까지)');
   assert.equal(scheduleLabel({ time: '11:00', startDate: '2026-12-01' }), '매일 11:00(12월 1일부터)');
   assert.equal(scheduleLabel({ time: '11:00' }), '매일 11:00');

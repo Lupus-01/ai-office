@@ -561,14 +561,15 @@ AI 판단이 넓어져도 모든 경로가 같은 규칙을 거친다. 규칙 �
 - 상시 업무 하나의 사용량은 감시 실행, 답장으로 이어진 실행, 감시가 만든 후속 업무를 합친다(`monitorUsage`). 카드에 "오늘 사용: AI 호출·토큰·평소 하루 평균"을 보여 준다.
 - 오늘 AI 호출이 최근 7일 중 기록이 있는 날(2일 이상)의 하루 평균보다 3배 이상이고 10회 이상이면 "사용량 이상" 알림(attention `usage`)을 띄운다. 업무는 멈추지 않는다. 멈춘 상시 업무는 알리지 않는다.
 
-### 업무 예약(1회·N회·매일)
+### 업무 예약(1회·N회·매일·요일 반복)
 
 - 회사 설정의 "업무 예약 → 예약 설정"에서 관리한다. 상단 "예약"은 바로가기다. 예약 저장은 회사 규칙 저장과 독립이다.
-- `lib/schedules.mjs`가 Asia/Seoul 기준 예약을 `.office/schedules.json`에 원자적으로 저장한다. 예약당 시각(`time`)·시작 날짜(`startDate`, 선택)·횟수(`times`, 선택)·마지막 날(`untilDate`)·지시·검토 AI·다음 시각·날짜별 마지막 실행·끝남(`completed`)을 둔다.
+- `lib/schedules.mjs`가 Asia/Seoul 기준 예약을 `.office/schedules.json`에 원자적으로 저장한다. 예약당 시각(`time`)·시작 날짜(`startDate`, 선택)·횟수(`times`, 선택)·요일(`weekdays`, 선택)·마지막 날(`untilDate`)·지시·검토 AI·다음 시각·날짜별 마지막 실행·끝남(`completed`)을 둔다.
   - 1회: `times:1`. 지정 날짜·시각에 한 번 실행하고 끝난다. 지정 시각이 이미 지났으면 등록을 거부한다.
   - N회: 시작일(없으면 다음 그 시각)부터 N일 동안 매일 실행한다. 놓친 날(앱 꺼짐·이전 회차 진행 중·일시중지)도 한 회로 센다. 마지막 날이 지나면 끝난다.
   - 매일: `times` 없음. 예전 예약(시각만 있음)도 그대로 매일 반복이다.
-- 지시가 "매일 오전 11시에 …", "내일 오전 10시에 …", "11월 5일 9시에 …", "내일부터 3일간 매일 10시에 …" 형태면 `POST /api/runs`가 `{scheduled:true, schedule}`를 돌려주고 바로 실행하지 않는다. 시각이 업무 내용일 뿐인 문장("내일 10시에 있는 회의 자료 준비")은 예약이 아니다. 모호한 시각·지난 시각은 400. `schedule:false`면 바로 실행한다.
+  - 요일 반복: `weekdays`(한국 날짜의 요일 번호 목록, 일=0 … 토=6). 그 요일의 그 시각에만 실행하고 다음 같은 요일로 넘어간다. 횟수(`times`)와 함께 쓸 수 없고(거부), 시작 날짜는 함께 쓸 수 있다. 예약 창에서는 요일 칸을 고르면 요일 반복, 비우면 매일이다.
+- 지시가 "매일 오전 11시에 …", "내일 오전 10시에 …", "11월 5일 9시에 …", "내일부터 3일간 매일 10시에 …", "매주 금요일 오후 1시에 …"(여러 요일 "월·수·금", 범위 "월~금" 포함) 형태면 `POST /api/runs`가 `{scheduled:true, schedule}`를 돌려주고 바로 실행하지 않는다. 시각이 업무 내용일 뿐인 문장("내일 10시에 있는 회의 자료 준비")은 예약이 아니다. 모호한 시각·지난 시각은 400. `schedule:false`면 바로 실행한다. 요일 반복은 판별 AI 응답에 요일 칸이 없으므로 규칙 판별(`scheduleRequest`)의 시각·요일을 쓴다. "매주 목표"처럼 요일 글자만 있는 말은 '요일'이나 바로 뒤 시각이 없으면 요일 반복으로 보지 않는다.
 - 예약 실행 지시에는 "지시의 날짜·시각·반복 표현은 예약으로 이미 처리했으니 지금 바로 이번 회차만 처리"하라는 안내를 붙인다.
 - 서버가 1초마다 확인한다. 시작 전에 날짜별 시도를 기록해 재시작 후 같은 회차를 다시 돌리지 않는다. 부팅 때 지난 시각과 1분을 넘긴 지연은 건너뛴다(1회 예약이면 끝남). 이전 회차가 running/queued/needsReply면 겹치지 않는다.
 - 시각·날짜·횟수를 고치면 회차를 새로 센다(끝난 예약도 다시 켜짐). 단순히 다시 켜면 남은 회차만 이어 가고, 남은 회차가 없으면 거부한다. 중지·삭제는 실행 중 업무를 취소하지 않는다.
@@ -766,7 +767,7 @@ node scripts/codex-review.mjs --target outputs/<날짜>/<slug> [--reviewers <id�
 | POST /api/outputs/:taskId/open, /api/workspace/open | 폴더 열기(셸 없는 open/explorer/xdg-open) |
 | POST /api/reviews | codex-review 백그라운드 실행 |
 | GET/POST /api/connections, POST /api/connections/:id/open·confirm, PUT·DELETE /api/connections/:id | 계정 연결 |
-| GET/POST /api/schedules, PUT·DELETE /api/schedules/:id | 예약(`prompt, time(HH:mm), startDate?(YYYY-MM-DD), times?(1~365), chief?`, 수정에 `enabled`) |
+| GET/POST /api/schedules, PUT·DELETE /api/schedules/:id | 예약(`prompt, time(HH:mm), startDate?(YYYY-MM-DD), times?(1~365), weekdays?([0~6], times와 함께 못 씀), chief?`, 수정에 `enabled`) |
 | DELETE /api/history | 내역 정리 |
 | GET /api/org/export, POST /api/org/import | 회사 구성 백업·복원(가져오기 8MB) |
 
