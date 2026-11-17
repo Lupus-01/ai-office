@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  BACKGROUND_DENY_MESSAGE, CHIEF_DENY_MESSAGE, PRE_TASK_DENY_MESSAGE, REJECT_LIMIT_MESSAGE, decideChiefGuard, isAllowedChiefWrite, isAllowedOfficeCommand, onDutyAgents, splitSafeCommand, summarizeAgents,
+  BACKGROUND_DENY_MESSAGE, CHIEF_DENY_MESSAGE, PRE_TASK_DENY_MESSAGE, REJECT_LIMIT_MESSAGE, decideChiefGuard, decideSetupGuard, isAllowedChiefWrite, isAllowedOfficeCommand, onDutyAgents, splitSafeCommand, summarizeAgents,
 } from '../lib/chief-guard.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -155,6 +155,7 @@ test('splitSafeCommand·summarizeAgents 경계', () => {
   // Windows는 대소문자를 가리지 않는다(platform 인자로 비교 규칙만 바꾼다)
   assert.equal(isAllowedOfficeCommand('NODE.EXE Scripts/Office.mjs task list', { root: ROOT, platform: 'win32' }), true);
   assert.equal(isAllowedOfficeCommand('node Scripts/Office.mjs task list', { root: ROOT, platform: 'darwin' }), false);
+  assert.equal(isAllowedOfficeCommand('node scripts/naver-api.mjs status', { root: ROOT }), false, '비서실장은 카페 API 세팅 명령을 쓰지 않는다');
   assert.equal(isAllowedChiefWrite(join(ROOT, 'outputs', '2026-10-29', 'landing', 'REPORT.md'), { root: ROOT, task: TASK, platform: 'win32' }), true);
   assert.equal(isAllowedChiefWrite(join(ROOT, 'outputs', '2026-10-29', 'landing', 'REPORT.md'), { root: ROOT, task: TASK, platform: 'darwin' }), false);
   assert.equal(isAllowedChiefWrite(join(ROOT, 'outputs', 'brief.md'), { root: ROOT, task: '../..', platform: 'darwin' }), false, '업무 id가 outputs 밖이면 거부');
@@ -167,7 +168,7 @@ test('splitSafeCommand·summarizeAgents 경계', () => {
 
 function makeRoot(t) {
   const root = mkdtempSync(join(tmpdir(), 'office-guard-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  t.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
   mkdirSync(join(root, 'hooks'));
   cpSync(join(REPO, 'hooks', 'chief-guard.mjs'), join(root, 'hooks', 'chief-guard.mjs'));
   cpSync(join(REPO, 'lib'), join(root, 'lib'), { recursive: true });
@@ -379,4 +380,21 @@ test('프로세스: 직원 세션도 보관함/계정.env를 읽으면 거부한
   assert.equal(out.hookSpecificOutput.permissionDecision, 'deny');
   assert.match(out.hookSpecificOutput.permissionDecisionReason, /서버만 읽습니다/);
   assert.equal(runGuard(root, pre(root, 'Read', { file_path: join(root, 'outputs', 'a.md') }, { agent_type: 'dev-2' })).stdout, '');
+});
+
+test('카페 공식 API 세팅 보호: 작업 공간 세션과 직원은 naver-api.mjs save·connect를 못 쓰고, 프로그램 폴더 세션과 status는 된다', (t) => {
+  const bash = (command, extra = {}) => ({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, ...extra });
+  const save = 'node read-keys.mjs | node scripts/naver-api.mjs save --replace';
+  assert.ok(decideSetupGuard(bash(save), { workspaceSession: true }));
+  assert.ok(decideSetupGuard(bash('cd /p && node scripts/naver-api.mjs connect --reconnect'), { workspaceSession: true }));
+  assert.ok(decideSetupGuard(bash(save, { agent_type: 'dev-2' })), '프로그램 폴더 세션의 직원도 막는다');
+  assert.ok(decideSetupGuard({ ...bash(save), tool_name: 'PowerShell' }, { workspaceSession: true }));
+  assert.equal(decideSetupGuard(bash(save)), null, '대표가 프로그램 폴더에서 연 세션');
+  assert.equal(decideSetupGuard(bash('node scripts/naver-api.mjs status'), { workspaceSession: true }), null, '상태 확인은 읽기라 허용');
+  assert.equal(decideSetupGuard(bash('git commit -m "save connect"'), { workspaceSession: true }), null);
+  // 훅 프로세스: 직원 세션의 저장 명령을 거부한다
+  const root = makeRoot(t);
+  const res = runGuard(root, pre(root, 'Bash', { command: save }, { agent_type: 'dev-2' }));
+  assert.equal(JSON.parse(res.stdout).hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(JSON.parse(res.stdout).hookSpecificOutput.permissionDecisionReason, /프로그램 폴더에서 연 터미널 AI만/);
 });
