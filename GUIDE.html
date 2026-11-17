@@ -393,7 +393,7 @@
     <div>
       <h3>AI에게 설치를 맡기기</h3>
       <p>AI 입력창에 아래 문장을 그대로 보냅니다.</p>
-      <div class="say">https://github.com/JISANGHYEOK-0901/ai-office 를 내 홈 폴더에 받아서, README와 AGENTS.md 안내대로 AI Office 쓸 수 있게 환경설정하고 서버 켜줘</div>
+      <div class="say">https://github.com/Lupus-01/ai-office 를 내 홈 폴더에 받아서, README와 AGENTS.md 안내대로 AI Office 쓸 수 있게 환경설정하고 서버 켜줘</div>
       <ul>
         <li>AI가 프로그램 받기(깃 클론), Node 버전 확인, 필요한 부품 설치, 브라우저 업무용 Chrome 준비, 설치 점검, 서버 켜기까지 이어서 합니다. 몇 분 걸릴 수 있습니다.</li>
         <li>중간에 <b>“이 작업을 실행해도 될까요?”</b>(Claude: Do you want to proceed? / Codex: Allow command?)라고 물으면, 설명을 읽고 <b>Yes</b>를 고릅니다.</li>
@@ -423,7 +423,7 @@
       <li><a href="https://nodejs.org/ko" target="_blank" rel="noopener">nodejs.org</a>에서 초록색 <span class="btnlike">LTS</span> 버튼으로 Node.js를 받아 설치합니다.</li>
       <li><a href="https://www.jetbrains.com/ko-kr/idea/download/" target="_blank" rel="noopener">IntelliJ IDEA</a> 무료 버전을 받아 설치합니다.<span class="only-mac"> 맥은 칩(Apple Silicon/Intel)에 맞는 파일을 고릅니다(사과 메뉴 → 이 Mac에 관하여).</span></li>
       <li>IntelliJ 첫 화면에서 <span class="btnlike">Clone Repository</span>(또는 Get from VCS)를 누르고 URL에 아래 주소를 넣은 뒤 <span class="btnlike">Clone</span>. “Git이 없습니다”가 나오면 <span class="btnlike">Download and Install</span>, “프로젝트를 신뢰하시겠습니까?”에는 <span class="btnlike">Trust Project</span>.
-        <div class="cmd"><code>https://github.com/JISANGHYEOK-0901/ai-office.git</code><button type="button" class="copy">복사</button></div>
+        <div class="cmd"><code>https://github.com/Lupus-01/ai-office.git</code><button type="button" class="copy">복사</button></div>
       </li>
       <li>IntelliJ 왼쪽 아래 터미널 아이콘(<code>&gt;_</code>)으로 터미널을 열고 2·4단계(AI 설치·로그인)를 한 뒤 <a href="#start">4. 서버 켜기</a>로 넘어갑니다.</li>
     </ol>
@@ -689,7 +689,7 @@
   <div class="card">
     <h3 style="margin-top:0">AI Office를 많이 고쳐 써서 업데이트하면 충돌이 나는 경우</h3>
     <p>내 컴퓨터의 AI Office를 직접 많이 고쳤다면 최신 버전을 통째로 받을 때 충돌이 납니다. 이때는 <b>Aside 기능만 골라서 내 코드에 옮겨 달라고</b> 터미널 AI에게 말합니다. 내가 고친 기능은 그대로 둡니다.</p>
-    <div class="say">https://github.com/JISANGHYEOK-0901/ai-office.git 의 Aside 업데이트를 내 AI Office에 적용해줘. 먼저 지금 상태를 커밋해 두고, git fetch·pull로 통째로 가져오지 말고 그 저장소의 docs/ASIDE_PORTING.md 안내대로 Aside 기능만 내 코드 구조와 화면에 맞게 옮겨줘. 내가 고친 기능은 유지하고, 다 옮기면 테스트를 돌려서 결과를 알려줘</div>
+    <div class="say">https://github.com/Lupus-01/ai-office.git 의 Aside 업데이트를 내 AI Office에 적용해줘. 먼저 지금 상태를 커밋해 두고, git fetch·pull로 통째로 가져오지 말고 그 저장소의 docs/ASIDE_PORTING.md 안내대로 Aside 기능만 내 코드 구조와 화면에 맞게 옮겨줘. 내가 고친 기능은 유지하고, 다 옮기면 테스트를 돌려서 결과를 알려줘</div>
     <div class="say">위 저장소의 GUIDE.html을 받아서 Aside 탭을 열어 주고, 어떻게 세팅해야 하는지 비개발자도 알기 쉽게 하나씩 설명해줘</div>
     <ul>
       <li>AI가 원본을 다른 폴더에 받아 읽고, 바뀐 부분을 내 코드의 같은 역할을 하는 곳에 옮깁니다. 위 지시문대로 먼저 지금 상태를 저장(커밋)해 두면, 문제가 생겼을 때 “옮기기 전으로 되돌려줘”라고 하면 됩니다.</li>
