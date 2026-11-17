@@ -100,6 +100,11 @@ test('상시 실행(멈출 때까지·기간·종료 시각)과 예약(매일·1
   assert.deepEqual(weekly.schedule, { time: '13:00', weekdays: [5] });
   const missed = await judgeCommand('매주 월·목 오전 9시에 보고해 줘', { now: NOW, judge: ai({}) });
   assert.deepEqual(missed.schedule, { time: '09:00', weekdays: [1, 4] });
+  // 규칙이 시각을 못 읽어도 판별의 반복 예약은 매일이 아니라 원문의 요일로 둔다. 1회 예약은 그대로 둔다
+  const split = await judgeCommand('매주 금요일, 보고서는 오후 1시에 정리해줘', { now: NOW, judge: ai({ scheduleTime: '13:00', scheduleTimes: 0, scheduleEvidence: '오후 1시에' }) });
+  assert.deepEqual(split.schedule, { time: '13:00', weekdays: [5] });
+  const weeklyOnce = await judgeCommand('매주 월요일 회의록을 정리해서 내일 오전 10시에 보내줘', { now: NOW, judge: ai({ scheduleTime: '10:00', scheduleDate: '2026-11-04', scheduleTimes: 1, scheduleEvidence: '내일 오전 10시에' }) });
+  assert.deepEqual(weeklyOnce.schedule, { time: '10:00', startDate: '2026-11-04', times: 1 });
 });
 
 test('AI 판별이 실패하거나 형식이 틀리면 기존 규칙 판별로 대신한다', async () => {
@@ -118,6 +123,8 @@ test('질문에 대한 답장을 승인·거절·수정으로 판별하고 근�
   assert.equal((await judgeAnswer('좋아요', [], { judge: say({ decision: 'decline', decisionEvidence: '취소합니다' }) })).decision, 'other');
   // AI 판별이 실패해도 고치라는 답을 승인으로 읽지 않는다(문장에 "해 줘"·"네"가 있어도)
   for (const text of ['본문 수정해 줘', '문안 다시 써 줘', '제목을 바꿔 주세요. 말투는 네요체로']) assert.equal((await judgeAnswer(text, [], { judge: async () => null })).decision, 'modify', text);
+  // "보내지 마", "한 번 더 보내면 안 돼"는 AI 판별이 실패해도 거절이다
+  for (const text of ['보내지 마', '한 번 더 보내면 안 돼', '게시하면 안 됩니다']) assert.equal((await judgeAnswer(text, [], { judge: async () => null })).decision, 'decline', text);
   const rule = await judgeAnswer('진행해', [], { judge: async () => null });
   assert.deepEqual([rule.decision, rule.source], ['approve', 'rule']);
 });

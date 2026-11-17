@@ -237,7 +237,13 @@ export async function verifyWebWork() {
       const r = Object.fromEntries((await call('browser_snapshot')).frames.flatMap((f) => f.controls).map((c) => [c.label, c.ref]));
       await assert.rejects(call('browser_collect', { steps: [] }), /steps/);
       await assert.rejects(call('browser_collect', { steps: Array.from({ length: 9 }, () => '요약') }), /steps/);
-      return call('browser_collect', { steps: [r['고객 관리'], '후기 분석', '저장', '없는 탭', '요약'] });
+      const result = await call('browser_collect', { steps: [r['고객 관리'], '후기 분석', '저장', '없는 탭', '요약'] });
+      // 모든 화면이 같으면(탭이 바뀌지 않음) 위·아래 줄로 나눠 빈 화면으로 만들지 않고 그대로 돌려준다
+      const same = await call('browser_collect', { steps: ['요약', '요약'] });
+      assert.ok(same.identical, '모든 화면이 같다고 알린다');
+      assert.equal(same.sharedTop, '');
+      assert.ok(same.views.every((v) => /상담사 상세 분석[\s\S]*요약: 상담 5건/.test(v.text)), '같은 화면도 글자를 비우지 않는다');
+      return result;
     } });
     assert.deepEqual(tabs.views.map((v) => v.text ?? `건너뜀:${v.skipped}`), ['고객 관리: 단골 3명', '후기 분석: 후기 2건', '건너뜀:읽기 전용 조회에서 누를 수 없는 버튼입니다.', '건너뜀:화면에서 이 이름의 탭·버튼을 찾지 못했습니다.', '요약: 상담 5건']);
     assert.match(tabs.sharedTop, /상담사 상세 분석\n가상별 · 1단계/);

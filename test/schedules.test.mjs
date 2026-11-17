@@ -162,6 +162,20 @@ test('요일 반복 예약 문장: "매주 금요일 오후 1시에"·여러 요
   assert.equal(scheduleRequest('매주 목표 점검 자료를 만들어 줘', now), null);
   assert.throws(() => scheduleRequest('매주 금요일에 카페 글 올려줘', now), /시각/);
   assert.throws(() => scheduleRequest('매주 금요일 오후 1시에 5회 반복 실행해 줘', now), /횟수/);
+  // 요일 뒤 "에"·"아침·저녁", "부터 … 까지" 범위
+  assert.deepEqual(scheduleRequest('매주 금요일 아침 9시에 주간 보고서 정리해줘', now), { time: '09:00', weekdays: [5] });
+  assert.deepEqual(scheduleRequest('매주 금요일에 오후 1시 보고서 정리해줘', now), { time: '13:00', weekdays: [5] });
+  assert.deepEqual(scheduleRequest('매주 금요일마다 저녁 7시에 정리해 줘', now), { time: '19:00', weekdays: [5] });
+  assert.deepEqual(scheduleRequest('매주 월요일부터 금요일까지 9시에 뉴스 정리해줘', now), { time: '09:00', weekdays: [1, 2, 3, 4, 5] });
+  assert.throws(() => scheduleRequest('매주 일요일 밤 12시에 백업해 줘', now), /자정/);
+  // 요일이 업무 내용일 뿐이면 예약이 아니고 오류도 내지 않는다(판별 AI가 실패해 규칙으로 판별할 때 바로 실행되던 업무)
+  assert.equal(scheduleRequest('매주 금요일 보고서 양식으로 시장 동향을 정리해줘', now), null);
+  assert.equal(scheduleRequest('매주 금요일 오후 1시에 있는 팀 회의 안건을 정리해줘', now), null);
+  assert.equal(scheduleRequest('매주 금요일 일정 정리해줘', now), null);
+  assert.deepEqual(scheduleRequest('매주 월요일 회의록을 정리해서 내일 오전 10시에 보내줘', now), { time: '10:00', startDate: '2026-11-17', times: 1 });
+  // 매일·1회 예약도 "아침·저녁" 시각을 읽는다
+  assert.deepEqual(scheduleRequest('매일 아침 9시에 뉴스 정리해줘', now), { time: '09:00' });
+  assert.deepEqual(scheduleRequest('내일 저녁 7시에 카페에 글 올려줘', now), { time: '19:00', startDate: '2026-11-17', times: 1 });
 });
 
 test('요일 반복 예약은 그 요일에만 실행하고 다음 같은 요일로 넘어간다. 횟수와 함께 쓰면 거부한다', async (t) => {

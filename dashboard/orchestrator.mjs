@@ -52,7 +52,9 @@ export function checkpointFile(root, rootId) {
 
 // 직원의 needs_decision 응답에서 대표에게 보여 줄 글: 이유(summary)와 질문(question·questions)
 export function staffQuestion(result) {
-  const questions = [result?.question, ...(Array.isArray(result?.questions) ? result.questions : [])].map((q) => String(q || '').trim()).filter(Boolean);
+  // questions 항목이 {question, default}처럼 객체여도 "[object Object]"가 아니라 질문 글을 보여 준다
+  const asText = (q) => (q && typeof q === 'object' ? q.question ?? q.text ?? JSON.stringify(q) : q);
+  const questions = [result?.question, ...(Array.isArray(result?.questions) ? result.questions : [])].map((q) => String(asText(q) || '').trim()).filter(Boolean);
   const summary = String(result?.summary || '').trim();
   const parts = [summary && !questions.includes(summary) ? summary : '', ...questions].filter(Boolean);
   return (parts.join('\n') || String(result?.reason || '').trim()).slice(0, 2000);
@@ -180,7 +182,9 @@ export async function orchestrate({ root, run, prompt, execute: runAI, signal, m
   const decisionNote = () => {
     const answers = state.decisions.map((d) => String(d.answer || '').trim()).filter(Boolean).slice(-3);
     if (!answers.length) return '';
-    return `대표가 이 업무에서 추가로 답한 내용: ${JSON.stringify(answers)}. 앞서 같은 이유로 멈춰 대표에게 물었다면 이 답을 따르고 같은 질문을 되풀이하지 마세요.${policy().allowResend ? ' 대표가 재발송·재게시를 지시했으므로, 같은 받는 사람·제목의 이전 발송이 보여도 중복으로 보고 멈추지 말고 이번 원문을 실행하세요.' : ''}`;
+    // 마지막 답이 거절(decline)이면 재발송 문구를 붙이지 않는다
+    const resend = policy().allowResend && state.decisions.at(-1)?.intent?.decision !== 'decline';
+    return `대표가 이 업무에서 추가로 답한 내용: ${JSON.stringify(answers)}. 앞서 같은 이유로 멈춰 대표에게 물었다면 이 답을 따르고 같은 질문을 되풀이하지 마세요.${resend ? ' 대표가 재발송·재게시를 지시했으므로, 같은 받는 사람·제목의 이전 발송이 보여도 중복으로 보고 멈추지 말고 이번 원문을 실행하세요.' : ''}`;
   };
   const persist = () => {
     state.budget.activeMs = activeMs();

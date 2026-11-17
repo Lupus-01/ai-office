@@ -3227,7 +3227,7 @@ const kstDate = (value) => new Date(Date.parse(value) + 9 * 3600e3).toISOString(
 // 예약 요약: "11월 4일 10:00 한 번" / "매일 10:00 · 3회(11월 6일까지)" / "매일 10:00(11월 4일부터)" / "매일 10:00" / "매주 금요일 13:00"
 export function scheduleLabel(item) {
   if (!item?.time) return '';
-  if (item.weekdays?.length) return `매주 ${item.weekdays.map((d) => '일월화수목금토'[d]).join('·')}요일 ${item.time}${item.startDate ? `(${monthDay(item.startDate)}부터)` : ''}`;
+  if (item.weekdays?.length) return `매주 ${[...item.weekdays].sort((a, b) => (a || 7) - (b || 7)).map((d) => '일월화수목금토'[d]).join('·')}요일 ${item.time}${item.startDate ? `(${monthDay(item.startDate)}부터)` : ''}`;
   if (item.times === 1) return `${monthDay(item.startDate || (item.nextAt && kstDate(item.nextAt)))} ${item.time} 한 번`.trim();
   if (item.times > 1) return `매일 ${item.time} · ${item.times}회${item.untilDate ? `(${monthDay(item.untilDate)}까지)` : ''}`;
   return `매일 ${item.time}${item.startDate ? `(${monthDay(item.startDate)}부터)` : ''}`;
