@@ -131,6 +131,9 @@ test/                     node:test
   - `apply --name <이름> [--yes]`: 자리 표시를 이름으로 채워 회사 구성을 통째로 바꾸고(org import와 같은 replace), 작업 공간 `.office/shared-org.json`에 이름·공유 파일 sha256을 남긴다. 표식 없이 부서·직원이 있는 PC는 `--yes` 없이 덮어쓰지 않는다. 이름 없이 부르면 표식의 이름을 쓴다.
   - 서버 시작: 표식이 있는 PC만, 공유 파일 sha256이 표식과 다르면 표식의 이름으로 다시 apply한다(그 PC에서 고친 구성은 덮어씀). 실패하면 경고만 남기고 지금 구성으로 켠다. 표식이 없는 PC는 건드리지 않는다.
   - `stop`은 표식만 지운다(구성은 그대로). `status`는 공유 파일 요약·적용 여부·최신 여부를 보여 준다. 비서실장 실행(`OFFICE_CHIEF_RUN=1`)에서는 모두 거부한다.
+- 배포·업데이트(lib/updates.mjs). 대시보드가 실행한 AI 안에서는 둘 다 거부한다.
+  - `npm run office:release`(대표 PC, scripts/release.mjs): main 브랜치이고, 공유 파일 밖의 추적 파일에 커밋하지 않은 변경이 없고, 원격이 앞서 있지 않아야 한다. 공유 구성을 publish해 바뀌었으면 `chore: 공유 회사 구성 갱신 (부서 N개 · 직원 N명)`으로 커밋한다. 원격보다 앞선 커밋이 있으면 `HEAD:refs/heads/<추적 브랜치>`로 push한다(강제 push 없음). 뺄 실명은 `--name`으로 한 번 받아 프로그램 폴더 `.office/release.json`에 둔다. 끝에 받는 쪽 안내 문구(`"<원격 웹 주소> 최신 버전으로 업데이트해줘"`)를 출력한다.
+  - `npm run office:update`(받는 PC, scripts/update.mjs): 추적 파일에 고친 것이 있거나 원격에 없는 로컬 커밋이 있으면 받지 않는다. 새 커밋이 없으면 서버를 건드리지 않는다. 있으면 진행 중 대화 실행(running·queued)이 없을 때만(`--force`로 넘김) 서버를 끄고 `git merge --ff-only`, package.json·package-lock.json이 바뀌었으면 `npm ci`를 한 뒤 서버를 켠다. 받기나 설치가 실패해도 서버는 다시 켜고 오류를 알린다. 바뀐 커밋 제목과 공유 구성 상태를 출력한다.
 - 가져오기는 검증 실패 시 아무것도 쓰지 않는다. 본문 한도 8MB.
 
 ### 생성 규칙 (sync-agents)

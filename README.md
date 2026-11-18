@@ -86,7 +86,11 @@ node scripts/shared-org.mjs status                  # 공유 파일과 이 PC �
 node scripts/shared-org.mjs apply --name <이름>      # 가져오기(이미 부서가 있으면 --yes가 있어야 덮어씀)
 node scripts/shared-org.mjs stop                    # 자동 맞춤 그만두기(구성은 그대로)
 node scripts/shared-org.mjs publish --name <실명>    # (대표 PC) 지금 구성을 실명을 빼고 공유 파일로 쓰기
+npm run office:release                              # (대표 PC) 공유 구성 갱신·커밋 후 포크 main에 올리고 파트장 안내 문구 출력(처음 한 번 -- --name <실명>)
+npm run office:update                               # (받는 PC) 새 버전 받기·필요하면 npm ci·서버 다시 켜기(공유 구성도 맞춤). 진행 중 업무가 있으면 거부(-- --force)
 ```
+
+배포 흐름: 대표 PC에서 `npm run office:release` → 출력된 문구(“<포크 주소> 최신 버전으로 업데이트해줘”)를 파트장에게 보냄 → 파트장이 자기 터미널 AI에게 그대로 말하면 AI가 `npm run office:update`를 실행합니다. 프로그램 폴더에 고친 파일이나 그 PC에만 있는 커밋이 있으면 업데이트는 거부합니다(덮어쓰지 않음).
 
 ## 작업 공간
 
