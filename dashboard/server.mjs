@@ -22,6 +22,7 @@ import { createSchedules, scheduleRequest } from '../lib/schedules.mjs';
 import { collectFinalOutputs, customOutputDirectory, finalOutputs, finalOutputSettings, resolveFinalOutput, saveFinalOutputSettings } from '../lib/final-outputs.mjs';
 import { WORKSPACE_SOURCE_LABEL, WorkspaceError, kstDate, legacyItems, programRoot, resolveWorkspace, saveLocalWorkspace } from '../lib/paths.mjs';
 import { ensureWorkspace, isCompatRoot } from '../lib/workspace.mjs';
+import { refreshSharedOrg } from '../lib/shared-org.mjs';
 import { acquireServerLock } from '../lib/server-lock.mjs';
 import { writeDashboardAccess } from '../lib/dashboard-access.mjs';
 import { appendEvent, readEvents, redact } from '../lib/events.mjs';
@@ -329,6 +330,13 @@ export async function startServer({
       if (init.error && !quiet) console.error(`[ai-office] 에이전트 파일을 맞추지 못했습니다: ${init.error.message}`);
     } catch (err) {
       throw new Error(`작업 공간(${root})을 준비하지 못했습니다: ${err.message}`);
+    }
+    // 공유 회사 구성을 받아 쓰는 PC(표식 있음)는 레포의 새 공유 구성으로 맞춘다. 실패해도 서버는 지금 구성으로 켠다
+    try {
+      const shared = await refreshSharedOrg({ root, program });
+      if (shared.applied && !quiet) console.log(`[ai-office] 공유 회사 구성을 새 버전으로 맞췄습니다: 부서 ${shared.summary.departments}개 · 직원 ${shared.summary.roster}명`);
+    } catch (err) {
+      if (!quiet) console.error(`[ai-office] 공유 회사 구성을 맞추지 못했습니다(지금 구성으로 켭니다): ${err.message}`);
     }
   }
   // 루프백이 아닌 주소에 바인딩하면 index.html을 받을 수 있는 기기 누구나 토큰을 얻게 된다.

@@ -126,6 +126,11 @@ test/                     node:test
 
 - departments.json·roster.json·company.md·company.json과 생성 파일은 Git에서 제외한다. 파일이 없으면 빈 회사(`[]`)로 시작한다.
 - 회사 구성 내보내기: `{version:1, company, departments, roster}`(설정이 있으면 `settings` 포함). 화면의 회사 설정과 `node scripts/office.mjs org export|import <파일> [--yes]`로 한다.
+- 공유 회사 구성(포크 배포용): 레포의 `shared/company-org.json`은 내보내기 형식과 같고, 대표 실명 자리를 `{{담당자 이름}}`로 바꾼 것이다. `node scripts/shared-org.mjs`(lib/shared-org.mjs)가 맡는다.
+  - `publish --name <실명>[,…]`: 대표 PC의 현재 구성을 내보내 문자열 값의 실명을 자리 표시로 바꿔 쓴다. 메일 주소·휴대폰 번호·주민등록번호 형태·사용자 폴더 경로·실명이 남으면 쓰지 않는다. 받아 쓰는 PC(표식 있음)에서는 거부한다.
+  - `apply --name <이름> [--yes]`: 자리 표시를 이름으로 채워 회사 구성을 통째로 바꾸고(org import와 같은 replace), 작업 공간 `.office/shared-org.json`에 이름·공유 파일 sha256을 남긴다. 표식 없이 부서·직원이 있는 PC는 `--yes` 없이 덮어쓰지 않는다. 이름 없이 부르면 표식의 이름을 쓴다.
+  - 서버 시작: 표식이 있는 PC만, 공유 파일 sha256이 표식과 다르면 표식의 이름으로 다시 apply한다(그 PC에서 고친 구성은 덮어씀). 실패하면 경고만 남기고 지금 구성으로 켠다. 표식이 없는 PC는 건드리지 않는다.
+  - `stop`은 표식만 지운다(구성은 그대로). `status`는 공유 파일 요약·적용 여부·최신 여부를 보여 준다. 비서실장 실행(`OFFICE_CHIEF_RUN=1`)에서는 모두 거부한다.
 - 가져오기는 검증 실패 시 아무것도 쓰지 않는다. 본문 한도 8MB.
 
 ### 생성 규칙 (sync-agents)

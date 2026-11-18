@@ -79,6 +79,15 @@ node scripts/office.mjs org export backup/ai-office-org.json   # 이미 있는 �
 node scripts/office.mjs org import backup/ai-office-org.json   # 요약을 보여주고 덮어쓸지 확인(--yes로 확인 생략)
 ```
 
+**공유 회사 구성(이 포크):** `shared/company-org.json`에는 대표가 공유한 홍카페 회사 구성이 들어 있습니다(담당자 실명은 `{{담당자 이름}}` 자리 표시). 설치를 맡기면 AI가 가져올지 묻고, 담당자 이름을 채워 가져옵니다. 가져온 PC는 서버를 켤 때 레포의 새 버전으로 자동으로 맞춥니다(그 PC에서 고친 구성은 덮어씀).
+
+```bash
+node scripts/shared-org.mjs status                  # 공유 파일과 이 PC 적용 상태
+node scripts/shared-org.mjs apply --name <이름>      # 가져오기(이미 부서가 있으면 --yes가 있어야 덮어씀)
+node scripts/shared-org.mjs stop                    # 자동 맞춤 그만두기(구성은 그대로)
+node scripts/shared-org.mjs publish --name <실명>    # (대표 PC) 지금 구성을 실명을 빼고 공유 파일로 쓰기
+```
+
 ## 작업 공간
 
 | 위치 | 들어 있는 것 |
