@@ -175,3 +175,79 @@ test('release: 커밋 안 된 코드 변경·원격이 앞섬·main이 아님이
   sh(owner, 'checkout', '-q', '-b', 'work');
   await assert.rejects(releaseProgram({ git: gitRunner(owner), publish }), /main 브랜치에서만/);
 });
+
+test('update: 새 버전이 없어도 지난 설치가 끝나지 않았으면 설치부터 다시 하고 서버를 켠다', { skip: !hasGit && 'git 없음' }, async (t) => {
+  const { clone } = setup(t);
+  const member = clone('member');
+  let stale = true;
+  const h = hooks();
+  const r = await updateProgram({ git: gitRunner(member), ...h, install: async () => { h.calls.push('install'); stale = false; }, installStale: () => stale });
+  assert.equal(r.updated, false);
+  assert.equal(r.repaired, true);
+  assert.deepEqual(h.calls, ['stop', 'install', 'start']);
+  const again = await updateProgram({ git: gitRunner(member), ...hooks(), installStale: () => stale });
+  assert.equal(again.repaired, false, '설치가 끝났으면 다시 하지 않는다');
+});
+
+test('update: 설치에 실패하면 설치 실패를 먼저 알리고, 서버는 다시 켜 본다', { skip: !hasGit && 'git 없음' }, async (t) => {
+  const { owner, clone } = setup(t);
+  const member = clone('member');
+  commit(owner, 'package-lock.json', '{"v":2}\n', 'chore: 부품');
+  sh(owner, 'push', '-q');
+  const h = hooks();
+  await assert.rejects(updateProgram({
+    git: gitRunner(member), ...h,
+    install: async () => { h.calls.push('install'); throw new Error('부품 설치(npm ci)에 실패했습니다'); },
+    startServer: async () => { h.calls.push('start'); throw new Error('서버를 켜지 못했습니다.'); },
+  }), /부품 설치\(npm ci\)에 실패했습니다 \(서버도 다시 켜지 못했습니다: 서버를 켜지 못했습니다\.\)/);
+  assert.deepEqual(h.calls, ['stop', 'install', 'start']);
+});
+
+test('update: 보내 준 주소와 받는 주소가 다르면 멈추고, --switch면 그 주소로 바꿔 받는다', { skip: !hasGit && 'git 없음' }, async (t) => {
+  const { dir, bare, owner, clone } = setup(t);
+  const member = clone('member');
+  // 같은 이력을 가진 새 저장소(포크)에 새 커밋
+  const fork = join(dir, 'fork.git');
+  sh(dir, 'clone', '-q', '--bare', bare, fork);
+  const forkWork = join(dir, 'fork-work');
+  sh(dir, 'clone', '-q', fork, forkWork);
+  commit(forkWork, 'README.md', '포크\n', 'feat: 포크에만 있는 변경');
+  sh(forkWork, 'push', '-q');
+  await assert.rejects(updateProgram({ git: gitRunner(member), ...hooks(), from: fork }), (err) => err.code === 'REMOTE_MISMATCH' && /보내 준 주소/.test(err.message));
+  assert.equal(webUrl(sh(member, 'remote', 'get-url', 'origin')), webUrl(bare), '거부하면 주소를 바꾸지 않는다');
+  const r = await updateProgram({ git: gitRunner(member), ...hooks(), from: fork, switchRemote: true });
+  assert.equal(r.updated, true);
+  assert.deepEqual(r.commits, ['feat: 포크에만 있는 변경']);
+  assert.equal(r.switched.to, webUrl(fork));
+  // 같은 주소면(끝의 .git·대소문자 차이 무시) 그냥 받는다
+  const same = await updateProgram({ git: gitRunner(member), ...hooks(), from: `${fork}`.replace(/\.git$/, '') });
+  assert.equal(same.updated, false);
+  void owner;
+});
+
+test('release: 미리 보기는 쓰기·커밋·push를 하지 않고, 올릴 저장소가 바뀌면 멈추며, 처음 생긴 공유 파일도 커밋한다', { skip: !hasGit && 'git 없음' }, async (t) => {
+  const { bare, owner } = setup(t);
+  const calls = [];
+  const publish = (text) => async ({ dryRun }) => {
+    calls.push(dryRun);
+    if (!dryRun) write(owner, SHARED_ORG_REL, text);
+    return { changed: true, summary: { departments: 2, roster: 2 } };
+  };
+  const head = sh(owner, 'rev-parse', 'HEAD');
+  const preview = await releaseProgram({ git: gitRunner(owner), publish: publish('{"v":9}\n'), check: true });
+  assert.equal(preview.check, true);
+  assert.equal(preview.pushed, false);
+  assert.deepEqual(calls, [true]);
+  assert.equal(sh(owner, 'rev-parse', 'HEAD'), head);
+  assert.equal(sh(owner, 'status', '--porcelain'), '');
+
+  await assert.rejects(releaseProgram({ git: gitRunner(owner), publish: publish('{"v":9}\n'), expectedPush: 'https://github.com/someone/else' }), /올릴 저장소가 바뀌었습니다/);
+
+  // 공유 파일이 아직 Git에 없을 때(처음 배포)도 커밋해서 올린다
+  sh(owner, 'rm', '-q', '--', SHARED_ORG_REL);
+  sh(owner, 'commit', '-q', '-m', 'chore: 공유 파일 없앰');
+  const r = await releaseProgram({ git: gitRunner(owner), publish: publish('{"v":10}\n'), expectedPush: bare });
+  assert.equal(r.sharedCommitted, true);
+  assert.equal(r.pushed, true);
+  assert.equal(lf(sh(bare, 'show', `main:${SHARED_ORG_REL}`)), '{"v":10}');
+});

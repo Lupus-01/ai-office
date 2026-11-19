@@ -1,13 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { loadSettings, saveSettings } from '../lib/settings.mjs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { exportOrg, loadCompanyRules, loadOrg, saveCompanyRules, saveOrg } from '../lib/org.mjs';
 import {
   NAME_PLACEHOLDER, SHARED_ORG_REL, applySharedOrg, publishSharedOrg, readSharedMarker, refreshSharedOrg,
-  sharedOrgFile, sharedOrgLeaks, sharedOrgStatus, stopSharedOrg,
+  sharedOrgBackupDir, sharedOrgFile, sharedOrgLeaks, sharedOrgStatus, stopSharedOrg,
 } from '../lib/shared-org.mjs';
 
 function tempDir(t, prefix) {
@@ -60,8 +61,13 @@ test('publish: 메일 주소·휴대폰 번호·사용자 폴더 경로가 남�
     assert.throws(() => publishSharedOrg({ root, program, names: ['가나다'] }), /올리면 안 되는 내용/, leak);
   }
   assert.equal(existsSync(sharedOrgFile(program)), false, '실패하면 파일을 만들지 않는다');
-  assert.deepEqual(sharedOrgLeaks({ company: '가나다 님' }, ['가나다']), ['이름 "가나다"']);
+  assert.deepEqual(sharedOrgLeaks({ company: '가나다 님' }, ['가나다']), ['이름 "가나다"(회사 공통 규칙)']);
   assert.deepEqual(sharedOrgLeaks({ company: '깨끗한 규칙' }, ['가나다']), []);
+  // 어느 부서·직원의 어느 항목인지 알려 주고, 배열 안 값도 본다
+  assert.deepEqual(sharedOrgLeaks({ company: '', departments: [{ id: 'a', name: '가부', capabilities: ['연락 010-2222-3333'] }], roster: [{ id: 'a-1', name: '김', instructions: 'x@y.com' }] }),
+    ['휴대폰 번호(부서 가부 capabilities)', '메일 주소(직원 김(a-1) instructions)']);
+  // 긴 숫자 id 안의 010… 은 휴대폰으로 보지 않는다
+  assert.deepEqual(sharedOrgLeaks({ company: '상품 번호 9901012345678901' }), []);
 });
 
 test('publish: 빈 회사·잘못된 이름·받아 쓰는 PC에서는 거부한다', async (t) => {
@@ -160,6 +166,56 @@ test('서버 시작: 받아 쓰는 PC는 레포의 공유 구성이 바뀌었으
   assert.equal(loadOrg(member).departments.length, shared.departments.length);
   assert.ok(!JSON.stringify(exportOrg(member)).includes(NAME_PLACEHOLDER));
   assert.equal(sharedOrgStatus({ root: member, program: REPO }).upToDate, true);
+});
+
+test('publish 미리 보기: 쓰지 않고 바뀌는 부서·직원·규칙과 자리 표시 수를 알려 준다', (t) => {
+  const root = ownerPc(t);
+  const program = tempDir(t, 'office-shared-program-');
+  let r = publishSharedOrg({ root, program, names: ['가나다'], dryRun: true });
+  assert.equal(r.changed, true);
+  assert.deepEqual(r.changes, ['처음 올리는 공유 구성입니다.']);
+  assert.equal(existsSync(sharedOrgFile(program)), false, '미리 보기는 파일을 쓰지 않는다');
+  publishSharedOrg({ root, program, names: ['가나다'] });
+
+  const next = ownerOrg();
+  next.departments.push({ id: 'trend', name: 'AI트렌드부', en: 'TREND', engine: 'claude', summary: '조사' });
+  next.roster[0].instructions = '상담사 목록에서 찾는다.';
+  saveOrg(root, next);
+  r = publishSharedOrg({ root, program, names: ['가나다'], dryRun: true });
+  assert.deepEqual(r.changes, ['부서 추가: AI트렌드부', '직원 바뀜: 관리팀장 (instructions)']);
+  assert.equal(r.previousPlaceholders, 4);
+  assert.equal(r.placeholders, 2, '지침에서 실명 두 곳이 빠지면 자리 표시도 준다');
+  // 이름을 잘못 적으면 실명이 남지만 자리 표시가 0이 된다(release가 지난번보다 줄면 멈춘다)
+  const typo = publishSharedOrg({ root, program, names: ['가나라'], dryRun: true });
+  assert.equal(typo.placeholders, 0);
+  assert.equal(typo.previousPlaceholders, 4);
+});
+
+test('apply: 바꾸기 전 구성을 백업하고, 이미 받아 쓰는 PC의 회사 설정은 그대로 둔다', async (t) => {
+  const program = tempDir(t, 'office-shared-program-');
+  const owner = ownerPc(t);
+  saveSettings(owner, { mode: 'auto', chief: { engine: 'claude', model: 'sonnet', effort: 'high' }, budget: { calls: 240, minutes: 180 } });
+  publishSharedOrg({ root: owner, program, names: ['가나다'] });
+
+  const member = tempDir(t, 'office-shared-member-');
+  saveOrg(member, { departments: [{ id: 'mine', name: '내부서', en: 'MINE', engine: 'claude', summary: '내 것' }], roster: [] });
+  const first = await applySharedOrg({ root: member, program, name: '라마바', force: true });
+  assert.ok(first.backup && existsSync(first.backup), '덮어쓰기 전 구성을 남긴다');
+  assert.equal(JSON.parse(readFileSync(first.backup, 'utf8')).departments[0].name, '내부서');
+  assert.equal(loadSettings(member).budget.calls, 240, '처음 가져올 때는 공유 설정을 쓴다');
+
+  // 파트장이 상단에서 예산을 바꾼 뒤 대표가 새 구성을 올림
+  saveSettings(member, { ...loadSettings(member), budget: { calls: 40, minutes: 60 } });
+  const next = ownerOrg();
+  next.departments.push({ id: 'trend', name: 'AI트렌드부', en: 'TREND', engine: 'claude', summary: '조사' });
+  saveOrg(owner, next);
+  publishSharedOrg({ root: owner, program, names: ['가나다'] });
+  const r = await refreshSharedOrg({ root: member, program });
+  assert.equal(r.applied, true);
+  assert.ok(r.backup && existsSync(r.backup));
+  assert.equal(loadOrg(member).departments.length, 3);
+  assert.equal(loadSettings(member).budget.calls, 40, '받아 쓰는 PC의 회사 설정은 덮어쓰지 않는다');
+  assert.ok(readdirSync(sharedOrgBackupDir(member)).length >= 2);
 });
 
 test('stop: 자동 맞춤을 그만둬도 회사 구성은 남고, 이후 새 버전을 받지 않는다', async (t) => {
