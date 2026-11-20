@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { insideOfficeRun } from '../lib/dashboard-access.mjs';
 import { writeFileAtomic } from '../lib/org.mjs';
 import { programRoot, workspaceRoot } from '../lib/paths.mjs';
-import { SHARED_ORG_REL, publishSharedOrg } from '../lib/shared-org.mjs';
+import { SHARED_FILES_REL, SHARED_ORG_REL, publishSharedFiles, publishSharedOrg } from '../lib/shared-org.mjs';
 import { gitRunner, releaseProgram, updateMessage } from '../lib/updates.mjs';
 
 function parse(args) {
@@ -32,6 +32,11 @@ function printShared(shared) {
   const prev = shared.previousPlaceholders;
   console.log(`회사 구성: 부서 ${s.departments}개 · 직원 ${s.roster}명 · 실명 ${replaced}곳을 자리 표시로 바꿈(자리 표시 ${shared.placeholders}곳${prev === null ? '' : `, 지난번 ${prev}곳`})`);
   for (const c of shared.changes) console.log(`  - ${c}`);
+  const f = shared.files;
+  if (!f) return;
+  console.log(`보관함 자료(${SHARED_FILES_REL}, 문서 정보의 작성자·회사명은 지우고 올림): 파일 ${f.total}개 · 추가 ${f.added.length} · 바뀜 ${f.changed.length} · 삭제 ${f.removed.length}`);
+  for (const [label, list] of [['추가', f.added], ['바뀜', f.changed], ['삭제', f.removed]]) for (const p of list.slice(0, 10)) console.log(`  - ${label}: 보관함/${p}`);
+  for (const d of f.kept) console.log(`  - 이 PC에 원본(보관함/${d})이 없어 저장소에 실린 것을 그대로 둡니다`);
 }
 
 async function main(args) {
@@ -56,7 +61,10 @@ async function main(args) {
         printShared(preview);
         throw new Error(`자리 표시가 지난번 ${preview.previousPlaceholders}곳에서 ${preview.placeholders}곳으로 줄었습니다. 실명을 잘못 적었으면 실명이 그대로 공개될 수 있어 멈췄습니다. 지침에서 실명을 뺀 게 맞으면 --yes를 붙이세요.`);
       }
-      return dryRun ? preview : publishSharedOrg({ root, program, names });
+      // 보관함 자료도 먼저 미리 보기로 흔적을 검사한다(흔적이 있으면 회사 구성도 쓰기 전에 멈춘다)
+      const filesPreview = await publishSharedFiles({ root, program, names, dryRun: true });
+      if (dryRun) return { ...preview, files: filesPreview };
+      return { ...publishSharedOrg({ root, program, names }), files: await publishSharedFiles({ root, program, names }) };
     },
   });
   if (opts.name !== null || (r.pushed && !saved.pushUrl)) {
@@ -67,6 +75,7 @@ async function main(args) {
   if (r.check) {
     console.log(`\n미리 보기입니다(쓰기·커밋·push 안 함). 올릴 곳: ${r.url}`);
     if (r.shared.changed) console.log(`공유 파일(${SHARED_ORG_REL})이 위처럼 바뀝니다. 바뀐 지침에 실제 상담사·고객 이름이 없는지 확인하세요.`);
+    if (r.shared.files?.changedAny) console.log(`보관함 자료(${SHARED_FILES_REL})가 위처럼 바뀝니다. 바뀐 양식·기준서에 실제 상담사·고객 이름이 없는지 확인하세요.`);
     console.log(r.commits.length ? `함께 올라갈 커밋:\n${r.commits.map((c) => `  - ${c}`).join('\n')}` : '함께 올라갈 다른 커밋은 없습니다.');
     return;
   }

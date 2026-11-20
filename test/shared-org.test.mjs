@@ -6,9 +6,10 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { exportOrg, loadCompanyRules, loadOrg, saveCompanyRules, saveOrg } from '../lib/org.mjs';
+import JSZip from 'jszip';
 import {
-  NAME_PLACEHOLDER, SHARED_ORG_REL, applySharedOrg, publishSharedOrg, readSharedMarker, refreshSharedOrg,
-  sharedOrgBackupDir, sharedOrgFile, sharedOrgLeaks, sharedOrgStatus, stopSharedOrg,
+  NAME_PLACEHOLDER, SHARED_ORG_REL, applySharedOrg, publishSharedFiles, publishSharedOrg, readSharedMarker, refreshSharedOrg,
+  sharedFilesDir, sharedFilesSha, sharedOrgBackupDir, sharedOrgFile, sharedOrgLeaks, sharedOrgStatus, stopSharedOrg,
 } from '../lib/shared-org.mjs';
 
 function tempDir(t, prefix) {
@@ -230,4 +231,115 @@ test('stop: 자동 맞춤을 그만둬도 회사 구성은 남고, 이후 새 �
   writeFileSync(sharedOrgFile(program), readFileSync(sharedOrgFile(program), 'utf8').replace('품질검수부', '품질검수실'));
   assert.deepEqual(await refreshSharedOrg({ root: member, program }), { applied: false, reason: 'not-subscribed' });
   assert.ok(loadOrg(member).departments.some((d) => d.name === '품질검수부'));
+});
+
+// ── 보관함 자료(양식·도구) ──
+// 작성자·회사 정보가 든 가짜 워드(실제 문서 정보 칸과 같은 이름)
+async function fakeDocx(text, person) {
+  const z = new JSZip();
+  z.file('[Content_Types].xml', '<Types/>');
+  z.file('docProps/core.xml', `<cp:coreProperties xmlns:cp="c" xmlns:dc="d"><dc:creator>${person}</dc:creator><cp:lastModifiedBy>${person}</cp:lastModifiedBy><dc:title>틀</dc:title></cp:coreProperties>`);
+  z.file('docProps/app.xml', `<Properties><Company>${person} 회사</Company><Manager>${person}</Manager></Properties>`);
+  z.file('word/document.xml', `<w:document><w:body><w:p><w:r><w:t>${text}</w:t></w:r></w:p></w:body></w:document>`);
+  return z.generateAsync({ type: 'nodebuffer' });
+}
+const kitFile = (root, rel) => join(root, '보관함', '프로필제작', '양식', ...rel.split('/'));
+function putKit(root, files) {
+  for (const [rel, data] of Object.entries(files)) { mkdirSync(dirname(kitFile(root, rel)), { recursive: true }); writeFileSync(kitFile(root, rel), data); }
+}
+const sharedKit = (program, rel) => join(sharedFilesDir(program), '프로필제작', '양식', ...rel.split('/'));
+
+test('보관함 자료 publish: 양식을 shared/보관함/에 싣고 문서 정보(작성자·회사)는 지우며, 실명·연락처가 있으면 쓰지 않는다', async (t) => {
+  const root = ownerPc(t);
+  const program = tempDir(t, 'office-shared-program-');
+  putKit(root, { '작성기준서.md': '# 기준\n', '도구/check.cjs': 'ok\n', '틀/틀.docx': await fakeDocx('{{예명}} 소개', '홍길동') });
+  const dry = await publishSharedFiles({ root, program, names: ['가나다'], dryRun: true });
+  assert.deepEqual(dry.added, ['프로필제작/양식/도구/check.cjs', '프로필제작/양식/작성기준서.md', '프로필제작/양식/틀/틀.docx']);
+  assert.equal(existsSync(sharedFilesDir(program)), false, '미리 보기는 쓰지 않는다');
+
+  const r = await publishSharedFiles({ root, program, names: ['가나다'] });
+  assert.equal(r.total, 3);
+  const z = await JSZip.loadAsync(readFileSync(sharedKit(program, '틀/틀.docx')));
+  for (const part of ['docProps/core.xml', 'docProps/app.xml']) assert.doesNotMatch(await z.file(part).async('string'), /홍길동/, `${part}의 사람 이름을 지운다`);
+  assert.match(await z.file('docProps/core.xml').async('string'), /<dc:title>틀<\/dc:title>/, '그 밖의 문서 정보는 그대로');
+  assert.match(await z.file('word/document.xml').async('string'), /\{\{예명\}\} 소개/, '본문은 그대로');
+  const original = await JSZip.loadAsync(readFileSync(kitFile(root, '틀/틀.docx')));
+  assert.match(await original.file('docProps/core.xml').async('string'), /홍길동/, '대표 PC의 원본은 그대로');
+  assert.equal((await publishSharedFiles({ root, program, names: ['가나다'] })).changedAny, false, '같은 내용이면 다시 쓰지 않는다');
+
+  // 원본에서 지운 파일은 공유본에서도 지운다
+  rmSync(kitFile(root, '도구/check.cjs'));
+  assert.deepEqual((await publishSharedFiles({ root, program, names: ['가나다'] })).removed, ['프로필제작/양식/도구/check.cjs']);
+  assert.equal(existsSync(sharedKit(program, '도구/check.cjs')), false);
+
+  // 실명·연락처가 남아 있으면 아무것도 쓰지 않는다(문서 본문도 검사)
+  putKit(root, { '작성기준서.md': '# 기준\n담당 가나다 010-1234-5678\n' });
+  await assert.rejects(publishSharedFiles({ root, program, names: ['가나다'] }), (err) => /이름 "가나다"\(보관함\/프로필제작\/양식\/작성기준서\.md\)/.test(err.message) && /휴대폰 번호/.test(err.message));
+  assert.equal(readFileSync(sharedKit(program, '작성기준서.md'), 'utf8'), '# 기준\n');
+  putKit(root, { '작성기준서.md': '# 기준\n', '틀/틀.docx': await fakeDocx('담당 가나다', '홍길동') });
+  await assert.rejects(publishSharedFiles({ root, program, names: ['가나다'] }), /이름 "가나다"\(보관함\/프로필제작\/양식\/틀\/틀\.docx\)/);
+
+  // 원본 폴더가 없는 PC(양식을 안 옮긴 집 PC 등)는 실린 것을 그대로 둔다
+  const kept = await publishSharedFiles({ root: ownerPc(t), program, names: ['가나다'] });
+  assert.deepEqual(kept.kept, ['프로필제작/양식']);
+  assert.equal(kept.changedAny, false);
+  assert.ok(existsSync(sharedKit(program, '작성기준서.md')));
+});
+
+test('보관함 자료 apply·refresh: 받는 PC 보관함/에 넣고, 자료만 바뀌면 회사 구성은 그대로 둔 채 자료만 맞춘다(고친 파일은 백업)', async (t) => {
+  const owner = ownerPc(t);
+  const program = tempDir(t, 'office-shared-program-');
+  putKit(owner, { '작성기준서.md': '# 기준 1\n', '도구/check.cjs': 'v1\n' });
+  publishSharedOrg({ root: owner, program, names: ['가나다'] });
+  await publishSharedFiles({ root: owner, program, names: ['가나다'] });
+
+  const member = tempDir(t, 'office-shared-member-');
+  const a = await applySharedOrg({ root: member, program, name: '라마바' });
+  assert.equal(a.files.total, 2);
+  assert.equal(a.files.copied.length, 2);
+  assert.equal(readFileSync(kitFile(member, '작성기준서.md'), 'utf8'), '# 기준 1\n');
+  assert.equal(readSharedMarker(member).filesSha256, sharedFilesSha(program));
+  assert.deepEqual(await refreshSharedOrg({ root: member, program }), { applied: false, reason: 'up-to-date' });
+  assert.equal(sharedOrgStatus({ root: member, program }).files.total, 2);
+
+  // 받는 PC에서 고친 규칙·양식, 그 PC에만 있는 파일
+  saveCompanyRules(member, '이 PC에서 고친 규칙');
+  writeFileSync(kitFile(member, '작성기준서.md'), '# 이 PC에서 고침\n');
+  writeFileSync(kitFile(member, '내 메모.md'), '지우지 않는다\n');
+  // 대표가 양식만 고쳐 올림
+  putKit(owner, { '작성기준서.md': '# 기준 2\n' });
+  await publishSharedFiles({ root: owner, program, names: ['가나다'] });
+  assert.equal(sharedOrgStatus({ root: member, program }).upToDate, false);
+  const r = await refreshSharedOrg({ root: member, program });
+  assert.equal(r.applied, true);
+  assert.equal(r.filesOnly, true);
+  assert.deepEqual(r.files.copied, ['프로필제작/양식/작성기준서.md']);
+  assert.equal(readFileSync(kitFile(member, '작성기준서.md'), 'utf8'), '# 기준 2\n');
+  assert.equal(readFileSync(join(r.files.backup, '프로필제작', '양식', '작성기준서.md'), 'utf8'), '# 이 PC에서 고침\n', '덮어쓰기 전 파일을 백업한다');
+  assert.ok(existsSync(kitFile(member, '내 메모.md')), '레포에 없는 이 PC 파일은 지우지 않는다');
+  assert.match(loadCompanyRules(member), /이 PC에서 고친 규칙/, '자료만 바뀌면 회사 구성을 다시 덮어쓰지 않는다');
+  assert.equal(sharedOrgStatus({ root: member, program }).upToDate, true);
+
+  // 대표 PC(표식 없음)에는 넣지 않는다
+  assert.deepEqual(await refreshSharedOrg({ root: owner, program }), { applied: false, reason: 'not-subscribed' });
+});
+
+test('보관함 자료: 이 기능 전에 가져온 PC(표식에 자료 지문 없음)도 업데이트 뒤 서버를 켤 때 자료를 받는다', async (t) => {
+  const owner = ownerPc(t);
+  const program = tempDir(t, 'office-shared-program-');
+  publishSharedOrg({ root: owner, program, names: ['가나다'] });
+  const member = tempDir(t, 'office-shared-member-');
+  await applySharedOrg({ root: member, program, name: '라마바' });
+  // 예전 표식: filesSha256 칸이 없다
+  const marker = readSharedMarker(member);
+  delete marker.filesSha256;
+  writeFileSync(join(member, '.office', 'shared-org.json'), JSON.stringify(marker));
+  assert.deepEqual(await refreshSharedOrg({ root: member, program }), { applied: false, reason: 'up-to-date' }, '실린 자료가 없으면 할 일이 없다');
+  // 업데이트로 양식이 실린 레포를 받음
+  putKit(owner, { '작성기준서.md': '# 기준\n' });
+  await publishSharedFiles({ root: owner, program, names: ['가나다'] });
+  const r = await refreshSharedOrg({ root: member, program });
+  assert.equal(r.filesOnly, true);
+  assert.equal(readFileSync(kitFile(member, '작성기준서.md'), 'utf8'), '# 기준\n');
+  assert.equal(r.files.backup, null, '처음 받는 파일은 백업할 것이 없다');
 });

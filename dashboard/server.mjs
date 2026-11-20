@@ -334,7 +334,11 @@ export async function startServer({
     // 공유 회사 구성을 받아 쓰는 PC(표식 있음)는 레포의 새 공유 구성으로 맞춘다. 실패해도 서버는 지금 구성으로 켠다
     try {
       const shared = await refreshSharedOrg({ root, program });
-      if (shared.applied && !quiet) console.log(`[ai-office] 공유 회사 구성을 새 버전으로 맞췄습니다: 부서 ${shared.summary.departments}개 · 직원 ${shared.summary.roster}명`);
+      if (shared.applied && !quiet) {
+        console.log(shared.filesOnly
+          ? `[ai-office] 공유 보관함 자료(양식 등)를 새 버전으로 맞췄습니다: 파일 ${shared.files.copied.length}개`
+          : `[ai-office] 공유 회사 구성을 새 버전으로 맞췄습니다: 부서 ${shared.summary.departments}개 · 직원 ${shared.summary.roster}명${shared.files?.copied.length ? ` · 보관함 자료 ${shared.files.copied.length}개` : ''}`);
+      }
     } catch (err) {
       if (!quiet) console.error(`[ai-office] 공유 회사 구성을 맞추지 못했습니다(지금 구성으로 켭니다): ${err.message}`);
     }

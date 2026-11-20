@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SHARED_ORG_REL } from '../lib/shared-org.mjs';
+import { SHARED_FILES_REL, SHARED_ORG_REL } from '../lib/shared-org.mjs';
 import { gitRunner, releaseProgram, updateMessage, updateProgram, webUrl } from '../lib/updates.mjs';
 
 // 테스트 커밋 작성자(사용자 git 설정과 무관하게)
@@ -250,4 +250,30 @@ test('release: 미리 보기는 쓰기·커밋·push를 하지 않고, 올릴 �
   assert.equal(r.sharedCommitted, true);
   assert.equal(r.pushed, true);
   assert.equal(lf(sh(bare, 'show', `main:${SHARED_ORG_REL}`)), '{"v":10}');
+});
+
+test('release: 보관함 자료(shared/보관함/, 한글 경로)도 함께 커밋하고, 원본에서 없어진 파일은 지워서 올린다', { skip: !hasGit && 'git 없음' }, async (t) => {
+  const { bare, owner, clone } = setup(t);
+  const kit = `${SHARED_FILES_REL}/프로필제작/양식`;
+  const publish = (files) => async ({ dryRun }) => {
+    if (!dryRun) {
+      for (const [name, text] of Object.entries(files)) {
+        if (text === null) rmSync(join(owner, ...`${kit}/${name}`.split('/')), { force: true });
+        else write(owner, `${kit}/${name}`, text);
+      }
+    }
+    return { changed: false, summary: { departments: 2, roster: 2 }, files: { total: Object.values(files).filter((v) => v !== null).length } };
+  };
+  let r = await releaseProgram({ git: gitRunner(owner), publish: publish({ '작성기준서.md': '# 기준\n', '도구/check.cjs': 'ok\n' }) });
+  assert.equal(r.sharedCommitted, true);
+  assert.deepEqual(r.commits, ['chore: 공유 회사 구성 갱신 (부서 2개 · 직원 2명 · 보관함 자료 2개)']);
+  assert.equal(lf(sh(bare, 'show', `main:${kit}/작성기준서.md`)), '# 기준');
+
+  // 받아 둔 보관함 자료를 손으로 고쳤어도 "커밋하지 않은 프로그램 변경"으로 막지 않고, 배포가 다시 쓴 내용으로 올린다
+  write(owner, `${kit}/작성기준서.md`, '# 손으로 고침\n');
+  r = await releaseProgram({ git: gitRunner(owner), publish: publish({ '작성기준서.md': '# 기준 2\n', '도구/check.cjs': null }) });
+  assert.equal(r.pushed, true);
+  const member = clone('member');
+  assert.equal(lf(readFileSync(join(member, ...`${kit}/작성기준서.md`.split('/')), 'utf8')), '# 기준 2\n');
+  assert.equal(existsSync(join(member, ...`${kit}/도구/check.cjs`.split('/'))), false, '원본에서 지운 파일은 올린 저장소에서도 지운다');
 });

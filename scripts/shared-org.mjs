@@ -8,7 +8,7 @@
 import { insideOfficeRun } from '../lib/dashboard-access.mjs';
 import { programRoot, workspaceRoot } from '../lib/paths.mjs';
 import { ensureWorkspace, isCompatRoot } from '../lib/workspace.mjs';
-import { SHARED_ORG_REL, applySharedOrg, publishSharedOrg, sharedOrgStatus, stopSharedOrg } from '../lib/shared-org.mjs';
+import { SHARED_FILES_REL, SHARED_ORG_REL, applySharedOrg, publishSharedFiles, publishSharedOrg, sharedOrgStatus, stopSharedOrg } from '../lib/shared-org.mjs';
 
 const USAGE = `사용법:
   node scripts/shared-org.mjs status
@@ -43,6 +43,7 @@ async function main([cmd, ...rest]) {
     if (!s.exists) console.log(`공유 회사 구성 파일이 없습니다(${SHARED_ORG_REL}).`);
     else console.log(`공유 회사 구성: ${s.summary ? describe(s.summary) : '형식 오류'}`);
     console.log(`이 PC 회사 구성: 부서 ${s.current.departments}개 · 직원 ${s.current.roster}명`);
+    console.log(`함께 받는 보관함 자료: ${s.files.total ? `파일 ${s.files.total}개` : '없음'} (${s.files.dirs.map((d) => `보관함/${d}`).join(', ')})`);
     if (s.subscribed) console.log(`가져옴: 담당자 이름 ${s.name} · ${s.appliedAt} · ${s.upToDate ? '최신' : '새 버전 있음(서버를 다시 켜거나 apply)'}`);
     else console.log('아직 가져오지 않았습니다.');
     return;
@@ -53,7 +54,8 @@ async function main([cmd, ...rest]) {
     console.log(`공유 회사 구성을 가져왔습니다: ${describe(r.summary)} · 담당자 이름 ${r.name}`);
     console.log(`에이전트 파일: 생성·갱신 ${r.sync.changed.length}개, 삭제 ${r.sync.removed.length}개`);
     if (r.backup) console.log(`바꾸기 전 구성 백업: ${r.backup}`);
-    console.log('앞으로 서버를 켤 때 새 버전이 있으면 자동으로 맞춥니다(이 PC에서 고친 부서·지침은 덮어쓰고, 바꾸기 전 구성은 .office/shared-org-backups/에 남깁니다). 그만두려면 stop.');
+    if (r.files.total) console.log(`보관함 자료(양식 등): ${r.files.total}개 중 ${r.files.copied.length}개를 넣음${r.files.backup ? ` · 바꾸기 전 파일 백업: ${r.files.backup}` : ''}`);
+    console.log('앞으로 서버를 켤 때 새 버전이 있으면 자동으로 맞춥니다(이 PC에서 고친 부서·지침·양식은 덮어쓰고, 바꾸기 전 것은 .office/shared-org-backups/에 남깁니다). 그만두려면 stop.');
     return;
   }
   if (cmd === 'stop') {
@@ -63,11 +65,16 @@ async function main([cmd, ...rest]) {
   if (cmd === 'publish') {
     const names = String(opts.name ?? '').split(',').map((s) => s.trim()).filter(Boolean);
     if (!names.length) throw new Error('공개 파일에서 뺄 이름을 --name으로 지정하세요.');
+    // 보관함 자료의 흔적 검사를 먼저 한다(흔적이 있으면 회사 구성도 쓰지 않는다)
+    await publishSharedFiles({ root, program, names, dryRun: true });
     const r = publishSharedOrg({ root, program, names, dryRun: opts.check });
     const counts = Object.values(r.replaced).reduce((a, b) => a + b, 0);
     const head = r.dryRun ? (r.changed ? '올리면 공유 파일이 바뀝니다(미리 보기, 쓰지 않음)' : '바뀐 내용이 없습니다') : r.changed ? '공유 파일을 썼습니다' : '바뀐 내용이 없습니다';
     console.log(`${head}: ${SHARED_ORG_REL} · ${describe(r.summary)} · 이름 ${counts}곳을 자리 표시로 바꿈`);
     for (const c of r.changes) console.log(`  - ${c}`);
+    const f = await publishSharedFiles({ root, program, names, dryRun: opts.check });
+    console.log(`보관함 자료(${SHARED_FILES_REL}): 파일 ${f.total}개 · 추가 ${f.added.length} · 바뀜 ${f.changed.length} · 삭제 ${f.removed.length}${f.dryRun ? '(미리 보기, 쓰지 않음)' : ''}`);
+    for (const d of f.kept) console.log(`  - 이 PC에 원본(보관함/${d})이 없어 저장소에 실린 것을 그대로 둡니다`);
     return;
   }
   throw Object.assign(new Error('알 수 없는 명령입니다.'), { usage: true });
