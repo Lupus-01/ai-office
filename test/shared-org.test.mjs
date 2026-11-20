@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { exportOrg, loadCompanyRules, loadOrg, saveCompanyRules, saveOrg } from '../lib/org.mjs';
 import JSZip from 'jszip';
 import {
-  NAME_PLACEHOLDER, SHARED_ORG_REL, applySharedOrg, publishSharedFiles, publishSharedOrg, readSharedMarker, refreshSharedOrg,
+  NAME_PLACEHOLDER, SHARED_ORG_REL, SHARED_VAULT_DIRS, applySharedOrg, publishSharedFiles, publishSharedOrg, readSharedMarker, refreshSharedOrg,
   sharedFilesDir, sharedFilesSha, sharedOrgBackupDir, sharedOrgFile, sharedOrgLeaks, sharedOrgStatus, stopSharedOrg,
 } from '../lib/shared-org.mjs';
 
@@ -285,7 +285,7 @@ test('보관함 자료 publish: 양식을 shared/보관함/에 싣고 문서 정
 
   // 원본 폴더가 없는 PC(양식을 안 옮긴 집 PC 등)는 실린 것을 그대로 둔다
   const kept = await publishSharedFiles({ root: ownerPc(t), program, names: ['가나다'] });
-  assert.deepEqual(kept.kept, ['프로필제작/양식']);
+  assert.deepEqual(kept.kept, [...SHARED_VAULT_DIRS], '원본이 없는 폴더는 모두 그대로 둔다');
   assert.equal(kept.changedAny, false);
   assert.ok(existsSync(sharedKit(program, '작성기준서.md')));
 });
