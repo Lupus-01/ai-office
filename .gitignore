@@ -25,3 +25,5 @@ org/company.json
 최종산출물/
 # 보관함: 사이트별 계정(계정.env)과 최종산출물. 서버만 계정 파일을 읽는다
 보관함/
+# 단, 공유 보관함 자료(개인정보 없는 양식·도구, lib/shared-org.mjs SHARED_VAULT_DIRS)는 배포한다
+!/shared/보관함/

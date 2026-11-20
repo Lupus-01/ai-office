@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { SHARED_FILES_REL, SHARED_ORG_REL } from '../lib/shared-org.mjs';
 import { gitRunner, releaseProgram, updateMessage, updateProgram, webUrl } from '../lib/updates.mjs';
 
@@ -276,4 +277,26 @@ test('release: 보관함 자료(shared/보관함/, 한글 경로)도 함께 커�
   const member = clone('member');
   assert.equal(lf(readFileSync(join(member, ...`${kit}/작성기준서.md`.split('/')), 'utf8')), '# 기준 2\n');
   assert.equal(existsSync(join(member, ...`${kit}/도구/check.cjs`.split('/'))), false, '원본에서 지운 파일은 올린 저장소에서도 지운다');
+});
+
+// 2026-11-20 실측: 레포 .gitignore의 '보관함/' 규칙이 shared/보관함까지 빼서 양식이 커밋되지 않고 조용히 빠졌다
+test('release: 공유 자료가 .gitignore에 걸리면 커밋·push 전에 멈춘다', { skip: !hasGit && 'git 없음' }, async (t) => {
+  const { owner } = setup(t);
+  commit(owner, '.gitignore', '보관함/\n', 'chore: 보관함 제외');
+  const head = sh(owner, 'rev-parse', 'HEAD');
+  const publish = async ({ dryRun }) => {
+    if (!dryRun) write(owner, `${SHARED_FILES_REL}/프로필제작/양식/작성기준서.md`, '# 기준\n');
+    return { changed: false, summary: { departments: 2, roster: 2 }, files: { total: 1, files: ['프로필제작/양식/작성기준서.md'] } };
+  };
+  await assert.rejects(releaseProgram({ git: gitRunner(owner), publish, check: true }), /Git 제외 규칙\(\.gitignore\)에 걸려/, '미리 보기에서도 알려 준다');
+  await assert.rejects(releaseProgram({ git: gitRunner(owner), publish }), /Git 제외 규칙\(\.gitignore\)에 걸려.*shared\/보관함\/프로필제작\/양식\/작성기준서\.md/);
+  assert.equal(sh(owner, 'rev-parse', 'HEAD'), head, '커밋하지 않는다');
+});
+
+test('레포 .gitignore: 공유 보관함 자료는 올리고, 레포 안의 다른 보관함 폴더는 계속 뺀다', { skip: !hasGit && 'git 없음' }, () => {
+  const repo = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const ignored = (p) => spawnSync('git', ['check-ignore', '-q', '--', p], { cwd: repo }).status === 0;
+  assert.equal(ignored(`${SHARED_FILES_REL}/프로필제작/양식/작성기준서.md`), false);
+  assert.equal(ignored(`${SHARED_FILES_REL}/프로필제작/양식/틀/상담사프로필_틀.docx`), false);
+  assert.equal(ignored('보관함/최종산출물/a.txt'), true, '호환 모드 작업 공간의 보관함은 계속 뺀다');
 });
