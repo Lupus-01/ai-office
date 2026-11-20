@@ -235,12 +235,14 @@ test('stop: 자동 맞춤을 그만둬도 회사 구성은 남고, 이후 새 �
 
 // ── 보관함 자료(양식·도구) ──
 // 작성자·회사 정보가 든 가짜 워드(실제 문서 정보 칸과 같은 이름)
+// 실제 워드·PPT처럼 폴더 항목 없이 파일 항목만 둔다
 async function fakeDocx(text, person) {
   const z = new JSZip();
-  z.file('[Content_Types].xml', '<Types/>');
-  z.file('docProps/core.xml', `<cp:coreProperties xmlns:cp="c" xmlns:dc="d"><dc:creator>${person}</dc:creator><cp:lastModifiedBy>${person}</cp:lastModifiedBy><dc:title>틀</dc:title></cp:coreProperties>`);
-  z.file('docProps/app.xml', `<Properties><Company>${person} 회사</Company><Manager>${person}</Manager></Properties>`);
-  z.file('word/document.xml', `<w:document><w:body><w:p><w:r><w:t>${text}</w:t></w:r></w:p></w:body></w:document>`);
+  const put = (name, xml) => z.file(name, xml, { createFolders: false, date: new Date('2026-01-01T00:00:00Z') });
+  put('[Content_Types].xml', '<Types/>');
+  put('docProps/core.xml', `<cp:coreProperties xmlns:cp="c" xmlns:dc="d"><dc:creator>${person}</dc:creator><cp:lastModifiedBy>${person}</cp:lastModifiedBy><dc:title>틀</dc:title></cp:coreProperties>`);
+  put('docProps/app.xml', `<Properties><Company>${person} 회사</Company><Manager>${person}</Manager></Properties>`);
+  put('word/document.xml', `<w:document><w:body><w:p><w:r><w:t>${text}</w:t></w:r></w:p></w:body></w:document>`);
   return z.generateAsync({ type: 'nodebuffer' });
 }
 const kitFile = (root, rel) => join(root, '보관함', '프로필제작', '양식', ...rel.split('/'));
@@ -263,6 +265,8 @@ test('보관함 자료 publish: 양식을 shared/보관함/에 싣고 문서 정
   for (const part of ['docProps/core.xml', 'docProps/app.xml']) assert.doesNotMatch(await z.file(part).async('string'), /홍길동/, `${part}의 사람 이름을 지운다`);
   assert.match(await z.file('docProps/core.xml').async('string'), /<dc:title>틀<\/dc:title>/, '그 밖의 문서 정보는 그대로');
   assert.match(await z.file('word/document.xml').async('string'), /\{\{예명\}\} 소개/, '본문은 그대로');
+  const sourceZip = await JSZip.loadAsync(readFileSync(kitFile(root, '틀/틀.docx')));
+  assert.deepEqual(Object.keys(z.files).sort(), Object.keys(sourceZip.files).sort(), '원본에 없는 항목(지금 시각의 폴더 항목 등)을 더하지 않는다: 더하면 올릴 때마다 파일이 달라진다');
   const original = await JSZip.loadAsync(readFileSync(kitFile(root, '틀/틀.docx')));
   assert.match(await original.file('docProps/core.xml').async('string'), /홍길동/, '대표 PC의 원본은 그대로');
   assert.equal((await publishSharedFiles({ root, program, names: ['가나다'] })).changedAny, false, '같은 내용이면 다시 쓰지 않는다');
