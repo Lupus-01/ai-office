@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { createRunner } from '../dashboard/runner.mjs';
 
 // 비서실장은 Claude(구조화 응답), 최종 검토는 Codex, 직원 biz-1은 Aside(aside exec --json)로 응답하는 가짜 실행
-function fixture(t, { plan: planOf, staff, publish, outbound: extraOutbound = {}, staffFile = '작성 완료' } = {}) {
+function fixture(t, { plan: planOf, staff, publish, outbound: extraOutbound = {}, staffFile = '작성 완료', platform = process.platform } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'ai-office-aside-orch-'));
   t.after(() => rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
   mkdirSync(join(root, 'org'));
@@ -66,7 +66,7 @@ function fixture(t, { plan: planOf, staff, publish, outbound: extraOutbound = {}
     deliver: async (args) => { delivered.push(args); await args.execute(null, { files: [] }); return { status: 'confirmed', method: 'aside', resultUrl: args.publication.target }; },
     ...extraOutbound };
   const tools = { claude: { installed: true, loggedIn: true }, codex: { installed: true, loggedIn: true } };
-  const runner = createRunner({ root, spawnImpl, outbound, toolStatus: () => tools, env: { ...process.env, ASIDE_BIN: fake }, aside: { stopSessions: async () => 0 } });
+  const runner = createRunner({ root, spawnImpl, outbound, toolStatus: () => tools, env: { ...process.env, ASIDE_BIN: fake }, aside: { stopSessions: async () => 0 }, platform });
   t.after(() => runner.stopAll({ graceMs: 10 }));
   const final = async (run) => {
     const until = Date.now() + 15000;
@@ -97,6 +97,29 @@ test('Aside 직원의 사이트 조회: 대표 Aside 로그인을 확인하고, 
   assert.match(plan.input, /Aside 브라우저 직원\(엔진 aside\)/);
   assert.equal(readFileSync(join(f.root, 'outputs', ...f.task().split('/'), 'biz', 'biz-1-a.md'), 'utf8'), '# 회원 글\n\n- 글 1 (조회 1.3K)\n- 글 2\n- 글 3\n');
 });
+
+// 2026-11-20 회사 PC 실측: 입력 파일 3개(1.3만·3.6천·9.3천 자)를 붙이자 지시문이 3만 자를 넘어 Windows에서 단계가 멈췄다
+for (const platform of ['win32', 'linux']) {
+  test(`Aside 직원 입력 자료는 ${platform} 명령줄 한도 안으로 줄여 붙인다(입력이 길어도 단계가 멈추지 않음)`, async (t) => {
+    const big = (mark, n) => `${mark}\n${'가'.repeat(n)}\n${mark}-끝`;
+    const f = fixture(t, {
+      platform,
+      plan: (task) => {
+        const dir = join(f.root, 'outputs', ...task.split('/'), 'res'); mkdirSync(dir, { recursive: true });
+        const inputs = [['targets', 12972], ['comments', 3560], ['style', 9334]].map(([name, n]) => { const file = join(dir, `${name}.md`); writeFileSync(file, big(`[${name}]`, n)); return `outputs/${task}/res/${name}.md`; });
+        return { version: 1, task, goal: '댓글 대상 조회', stages: [stage(task, 'a', 'biz-1', 'biz', { connection: 'aside', target: 'https://cafe.naver.com/petdilab', inputs })], review: { by: 'chief', criteria: '확인' }, gaps: [], publications: [], deliverables: ['a'] };
+      },
+      staff: () => JSON.stringify({ status: 'done', summary: '1건', content: '# 대상\n\n- 글 1' }),
+    });
+    const result = await f.final(f.runner.start({ prompt: 'https://cafe.naver.com/petdilab 에서 댓글 달 글 1개 골라줘' }));
+    assert.equal(result.status, 'done', result.summary);
+    const staffCall = f.calls.find((c) => c.kind === 'aside');
+    if (platform === 'win32') assert.ok(staffCall.input.length < 30000, `지시문 ${staffCall.input.length}자`);
+    for (const name of ['targets', 'comments', 'style']) assert.match(staffCall.input, new RegExp(`\\[${name}\\]`), `${name} 입력의 앞부분은 들어간다`);
+    if (platform === 'win32') assert.match(staffCall.input, /…\(이하 생략\)/, 'Windows는 긴 입력을 줄여 붙인다');
+    else assert.match(staffCall.input, /\[style\]-끝/, '다른 OS는 지금처럼 다 붙인다');
+  });
+}
 
 test('Aside 직원에게 공개 웹 조사·파일 산출물을 배정하면 실행하지 않고 계획을 고치게 한다', async (t) => {
   let plans = 0;

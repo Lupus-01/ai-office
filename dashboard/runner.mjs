@@ -78,7 +78,7 @@ function groupAlive(pid) {
   }
 }
 
-export function createRunner({ root, onChange, judge = null, maxConcurrent = 4, spawnImpl = child_process.spawn, killGraceMs = 5000, outbound = null, keepAwake = null, env = process.env, toolStatus = () => null, aside = null }) {
+export function createRunner({ root, onChange, judge = null, maxConcurrent = 4, spawnImpl = child_process.spawn, killGraceMs = 5000, outbound = null, keepAwake = null, env = process.env, toolStatus = () => null, aside = null, platform = process.platform }) {
   // Aside 직원 실행의 세션 정리(CLI를 끝내도 Aside 세션은 계속 돌기 때문)
   const asideTools = aside || createAside({ env, spawnImpl });
   const officeDir = join(root, '.office');
@@ -291,7 +291,7 @@ export function createRunner({ root, onChange, judge = null, maxConcurrent = 4, 
   function asideSpec({ agent, dept, prompt, cmd }) {
     const text = `${agentInstructions(root, agent, dept, undefined, 'aside')}\n\n${prompt}`;
     // Windows 명령줄은 32767자까지라 여유를 두고 막는다
-    if (text.length > (process.platform === 'win32' ? 30000 : 100000)) throw httpError(400, 'Aside 직원에게 넘길 지시문이 너무 깁니다. 입력 자료를 줄여 주세요.');
+    if (text.length > (platform === 'win32' ? 30000 : 100000)) throw httpError(400, 'Aside 직원에게 넘길 지시문이 너무 깁니다. 입력 자료를 줄여 주세요.');
     return { engine: 'aside', agentId: agent.id, model: null, effort: null, cmd, args: asideExecArgs(text), input: null };
   }
 
@@ -733,7 +733,7 @@ export function createRunner({ root, onChange, judge = null, maxConcurrent = 4, 
                 display: `지속 감시 새 자료 보고: ${path.split('/').at(-1)}` });
             } });
         } else text = await orchestrate({ root, run, prompt: spec.input, execute, signal: controller.signal, intent: spec.intent || null, judge,
-          maxParallel: maxConcurrent, resume: spec.resumeOrchestration, onDecision: () => { spec.needsDecision = true; }, outbound, notes: entry.notes, engineOf });
+          maxParallel: maxConcurrent, resume: spec.resumeOrchestration, onDecision: () => { spec.needsDecision = true; }, outbound, notes: entry.notes, engineOf, platform });
       } catch (err) {
         status = controller.signal.aborted ? 'stopped' : 'failed';
         text = controller.signal.aborted ? '사용자가 업무 진행을 중지했습니다. 이어서 재개할 수 있습니다.' : redact(err.message);

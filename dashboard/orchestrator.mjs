@@ -60,7 +60,7 @@ export function staffQuestion(result) {
   return (parts.join('\n') || String(result?.reason || '').trim()).slice(0, 2000);
 }
 
-export async function orchestrate({ root, run, prompt, execute: runAI, signal, maxParallel = 4, resume = false, onDecision = () => {}, outbound = null, intent = null, judge = null, home = homedir(), sourceCheck = checkSources, wait = waitFor, notes = [], engineOf = null }) {
+export async function orchestrate({ root, run, prompt, execute: runAI, signal, maxParallel = 4, resume = false, onDecision = () => {}, outbound = null, intent = null, judge = null, home = homedir(), sourceCheck = checkSources, wait = waitFor, notes = [], engineOf = null, platform = process.platform }) {
   const task = run.task;
   const taskDir = join(root, 'outputs', ...task.split('/'));
   const file = checkpointFile(root, run.rootId);
@@ -595,8 +595,9 @@ export async function orchestrate({ root, run, prompt, execute: runAI, signal, m
     const command = (script) => `node "${join(programRoot(), 'scripts', script)}"`;
     return { newsSearch: command('news-search.mjs'), linkCheck: command('check-links.mjs') };
   };
-  // Aside 직원은 작업 공간 파일을 읽지 못하므로 입력 자료를 지시문에 붙인다(계정 파일 등 막힌 위치는 넣지 않는다)
-  const ASIDE_INPUT_MAX = 20000, ASIDE_INPUTS_MAX = 60000;
+  // Aside 직원은 작업 공간 파일을 읽지 못하므로 입력 자료를 지시문에 붙인다(계정 파일 등 막힌 위치는 넣지 않는다).
+  // Windows는 지시문을 명령줄 인자로 넘겨 3만 자에서 막는다(runner asideSpec). 직원 지침·단계 안내 몫을 남기도록 입력은 더 적게 붙인다
+  const [ASIDE_INPUT_MAX, ASIDE_INPUTS_MAX] = platform === 'win32' ? [8000, 14000] : [20000, 60000];
   const asideInputs = (inputs) => {
     let total = 0;
     return inputs.map((input) => {
