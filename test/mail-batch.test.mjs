@@ -97,6 +97,12 @@ test('위임이 없으면 첫 확인에 20통만 보여 주고 남은 통수를 
   assert.match(asked, /20\. 메일 \[메일 계정\] 받는사람 partner19@example\.invalid/);
   assert.doesNotMatch(asked, /받는사람 partner20@example\.invalid/);
   assert.match(asked, /남은 5통은 위 메일을 보낸 뒤 다시 묻습니다/);
+  // 질문에는 본문 앞부분만 보이므로, 보낼 메일 전부(25통)를 한 파일로 묶어 두고 위치를 알려 준다
+  assert.match(asked, /보낼 메일 25통의 전체 본문은 outputs\/2026-11-04\/partner-mail\/메일-미리보기\.html/);
+  const preview = readFileSync(join(f.root, 'outputs', f.task, '메일-미리보기.html'), 'utf8');
+  assert.match(preview, /메일 25통/);
+  assert.equal((preview.match(/class="note">이번에 보냄/g) || []).length, 20);
+  assert.equal((preview.match(/class="note">다음 차례/g) || []).length, 5);
   assert.match(await f.answer('진행'), /남은 메일이 5통 있습니다/);
   assert.equal(f.sent.length, 20);
 });

@@ -10,7 +10,8 @@
 //   node scripts/office.mjs org export <파일> [--yes]
 //   node scripts/office.mjs org import <파일> [--yes]
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { mailPreviewHtml, mailPreviewItems } from '../lib/mail-preview.mjs';
 import { createInterface } from 'node:readline/promises';
 import { WorkspaceError, kstDate, officeDir, outputsDir, workspaceRoot } from '../lib/paths.mjs';
 import { readEvents, redact } from '../lib/events.mjs';
@@ -39,6 +40,7 @@ const USAGE = [
   '  node scripts/office.mjs plan validate <업무>   outputs/<업무>/plan.json 검사(통과하면 plan.set 기록, 실패하면 종료 코드 1)',
   '  node scripts/office.mjs org export <파일> [--yes]   회사 구성(부서·직원·회사 규칙) 내보내기',
   '  node scripts/office.mjs org import <파일> [--yes]   내보낸 파일로 현재 회사 구성을 덮어쓰기',
+  '  node scripts/office.mjs mail preview <문안.json> [--out <파일.html>] [--title "…"]   메일 문안 JSON을 한 파일 미리보기로(작업 공간 안 경로만)',
 ].join('\n');
 
 class UsageError extends Error {}
@@ -506,8 +508,33 @@ async function orgImport(args) {
   for (const c of sync.conflicts) console.error(`주의: ${c} — 생성 표식이 없는 기존 파일이라 덮어쓰지 않았습니다.`);
 }
 
+// 메일 문안 JSON({messages:[{recipients,subject,body}],skipped})을 발송 때와 같은 서식의 미리보기 HTML 한 파일로 만든다.
+// 발송 전에 사람이 전원 메일을 넘겨 보며 확인하는 용도다. 읽고 쓰는 경로는 작업 공간 안으로 제한한다
+function mailPreview(args) {
+  const opt = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : null; };
+  const positional = args.filter((a, i) => !a.startsWith('--') && !['--out', '--title'].includes(args[i - 1]));
+  if (positional.length !== 1) throw new UsageError('문안 JSON 파일을 하나 지정하세요.');
+  const inside = (p) => { const rel = relative(resolve(root), p); return rel && !rel.startsWith('..') && !isAbsolute(rel); };
+  const input = resolve(root, positional[0]);
+  if (!inside(input) || !existsSync(input)) throw new Error(`작업 공간 안의 문안 파일을 찾지 못했습니다: ${positional[0]}`);
+  let value;
+  try { value = JSON.parse(readFileSync(input, 'utf8')); } catch { throw new Error('문안 파일이 JSON 형식이 아닙니다.'); }
+  const { items, skipped } = mailPreviewItems(value);
+  if (!items.length) throw new Error('messages 배열에 메일 문안이 없습니다.');
+  const out = resolve(root, opt('--out') || join(dirname(positional[0]), '메일-미리보기.html'));
+  if (!inside(out) || !/\.html?$/i.test(out)) throw new Error('미리보기는 작업 공간 안의 .html 파일로 저장합니다.');
+  mkdirSync(dirname(out), { recursive: true });
+  writeFileAtomic(out, mailPreviewHtml({ title: opt('--title') || '메일 미리보기', items, skipped }));
+  console.log(`메일 미리보기: ${items.length}통${skipped.length ? ` · 보내지 않는 대상 ${skipped.length}건` : ''}`);
+  console.log(`저장: ${relative(resolve(root), out).replace(/\\/g, '/')}`);
+}
+
 async function main(argv) {
   const [group, cmd, ...rest] = argv;
+  if (group === 'mail') {
+    if (cmd === 'preview') return mailPreview(rest);
+    throw new UsageError('알 수 없는 mail 하위 명령입니다.');
+  }
   if (group === 'task') {
     if (cmd === 'start') return taskStart(rest);
     if (cmd === 'status') return taskStatus(rest);

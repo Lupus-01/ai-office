@@ -15,6 +15,7 @@ import { stageResult, outputIssues, HTML_BRIEF } from '../lib/work-result.mjs';
 import { programRoot } from '../lib/paths.mjs';
 import { BUDGET_WARN_RATIO, MAX_MAILS_PER_RUN, MAX_PLAN_REVISIONS, MAX_PROGRESS_CHECKS, externalActionPolicy, isDraftOnly } from '../lib/guardrails.mjs';
 import { mailKey, preparePublications, splitMailBatch } from '../lib/publications.mjs';
+import { mailPreviewHtml } from '../lib/mail-preview.mjs';
 import { attachmentQuestion, attachmentRef, blockedReason, pickChoices, resolveAttachments } from '../lib/attachments.mjs';
 import { collectFinalOutputs } from '../lib/final-outputs.mjs';
 import { checkSources, sourceProblemReason } from '../lib/source-check.mjs';
@@ -987,10 +988,23 @@ export async function orchestrate({ root, run, prompt, execute: runAI, signal, m
           };
           const kind = { web: '웹사이트 작업', mail: '메일', post: '글', comment: '댓글' };
           const what = confirmJobs.every((job) => job.publication.action === 'web') ? '웹사이트 작업' : '외부 작업';
+          // 메일은 질문에 본문 앞부분만 보이므로, 보낼 메일 전부를 발송 때와 같은 서식으로 한 파일에 묶어 둔다(확인용. 실패해도 발송 흐름은 막지 않는다)
+          let previewLine = '';
+          const mailJobs = prepared.jobs.filter(isMail);
+          if (mailJobs.length) {
+            try {
+              const now = new Set(batch.run);
+              writeFileAtomic(join(taskDir, '메일-미리보기.html'), mailPreviewHtml({ title: `메일 미리보기 · ${redactContext(plan.goal).slice(0, 60)}`,
+                items: mailJobs.map((job) => ({ recipients: job.publication.recipients || [], subject: job.publication.subject || '', body: job.body,
+                  note: wasSent(job) ? '이미 보냄' : now.has(job) ? '이번에 보냄' : '다음 차례' })),
+                skipped: prepared.skipped || [], summary: batch.remaining.length ? `이번에 ${batch.run.filter(isMail).length}통, 남은 ${batch.remaining.length}통은 다시 확인` : '' }));
+              previewLine = `\n\n보낼 메일 ${mailJobs.length}통의 전체 본문은 outputs/${task}/메일-미리보기.html 에서 볼 수 있습니다.`;
+            } catch { previewLine = ''; }
+          }
           return ask([{ phase: 'web-confirm', question: `아래 ${what}을 실행할까요? ("진행" 또는 "하지 마"로 답하세요. 다음부터 확인 없이 하려면 지시에 "끝까지 자동으로"를 적어 주세요.)\n`
             + confirmJobs.map(({ publication: p, body, files = [] }, i) => { const attached = p.action === 'mail' ? mailFiles(p).map((f) => f.name) : files.map((f) => basename(f));
               return `${i + 1}. ${p.action === 'web' ? '' : `${kind[p.action] || p.action} `}[${label(p)}] ${p.recipients?.length ? `받는사람 ${p.recipients.join(', ')}` : p.target}${p.subject ? ` · 제목: ${p.subject}` : ''}${p.targetTitle ? ` · 대상 글: ${p.targetTitle}` : ''}${p.targetAuthor ? ` (작성자 ${p.targetAuthor})` : ''} — ${body.replace(/\s+/g, ' ').slice(0, 300)}${attached.length ? ` (첨부: ${attached.join(', ')})` : ''}`; }).join('\n')
-            + (batch.remaining.length ? `\n\n메일은 대량 발송을 막기 위해 한 번에 ${MAX_MAILS_PER_RUN}통까지만 보냅니다. 남은 ${batch.remaining.length}통은 위 메일을 보낸 뒤 다시 묻습니다.` : '') }]);
+            + (batch.remaining.length ? `\n\n메일은 대량 발송을 막기 위해 한 번에 ${MAX_MAILS_PER_RUN}통까지만 보냅니다. 남은 ${batch.remaining.length}통은 위 메일을 보낸 뒤 다시 묻습니다.` : '') + previewLine }]);
         }
         // 웹사이트 작업 추정은 넓은 문장 판별이라, 계획에 외부 작업이 없으면 비서실장 계획을 따른다(메일·게시는 확인)
         if (allowedActions().some((action) => action !== 'web') && !(plan.publications || []).length) return ask([{ phase: 'plan', question: '요청하신 외부 작업의 대상·계정·본문을 계획에서 확인하지 못했습니다. 계정 연결과 대상 주소를 확인해 주세요.' }]);
