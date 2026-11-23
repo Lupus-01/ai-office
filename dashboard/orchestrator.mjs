@@ -1034,18 +1034,14 @@ export async function orchestrate({ root, run, prompt, execute: runAI, signal, m
           emit('agent.start', { engine, agent: publication.agent, instance, summary: engine === 'aside' ? '검토된 원문의 외부 작업을 Aside 직원이 시작합니다.' : '검토된 원문의 외부 작업을 시작합니다.' });
           try {
             const web = publication.action === 'web';
-            // Aside 직원의 메일도 같은 서식으로 넣게, 서식 입힌 본문을 업무 폴더에 파일로 둔다(만들지 못하면 글자만 넣는다)
-            let asideMailHtml = '';
-            if (engine === 'aside' && isMail(job)) {
-              const html = mailHtml(body);
-              if (html) try { asideMailHtml = join(taskDir, 'evidence', `${instance}-본문.html`); mkdirSync(join(taskDir, 'evidence'), { recursive: true }); writeFileAtomic(asideMailHtml, html); } catch { asideMailHtml = ''; }
-            }
+            // Aside 직원의 메일도 같은 서식으로 넣게, 서식 입힌 본문을 지시문에 함께 준다(Aside는 업무 폴더 파일을 읽지 못한다. 너무 길면 글자만 넣는다)
+            const asideMailHtml = engine === 'aside' && isMail(job) ? mailHtml(body) || '' : '';
             const attachments = isMail(job) ? mailFiles(publication) : files.map((f) => ({ name: basename(f), path: safeOutput(f) }));
             const result = await outbound.deliver({ scope: run.rootId, publication, body, allowedActions: allowedActions(), instructionKey: instructionKey(), ...policy(), schedule: videoPolicy, signal,
               files: attachments, evidenceDir: join(taskDir, 'evidence'), engine,
               execute: async (browser, extra = {}) => {
                 const text = await execute({ phase: 'publish', agentId: publication.agent, browser,
-                prompt: engine === 'aside' ? asidePublishPrompt({ publication, body, web, files: extra.files || [], htmlFile: asideMailHtml }) : web ? [
+                prompt: engine === 'aside' ? asidePublishPrompt({ publication, body, web, files: extra.files || [], html: asideMailHtml.length <= 16000 ? asideMailHtml : '' }) : web ? [
                   '대표가 이번 업무에서 지시한 웹사이트 작업을 연결 계정의 브라우저로 실행합니다. 아래 지침대로 진행하고 지침에 없는 변경은 하지 마세요.',
                   `시작 주소: ${publication.target}`, `지침:\n${body}`,
                   attachments.length ? `첨부할 파일(browser_attach의 file 값): ${attachments.map((a) => a.name).join(', ')}` : '첨부 파일 없음',

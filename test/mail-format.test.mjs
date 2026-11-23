@@ -49,13 +49,13 @@ test('본문에 든 태그 모양 글자는 태그가 되지 않는다', () => {
   assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
 });
 
-test('Aside 직원 메일 지시: 서식 파일이 있으면 그 파일을 한 번 넣게 하고, 없으면 글자만 넣는다', async () => {
+test('Aside 직원 메일 지시: 서식 HTML이 있으면 그것을 한 번 넣게 하고, 없으면 글자만 넣는다', async () => {
   const { asidePublishPrompt } = await import('../lib/aside.mjs');
   const publication = { action: 'mail', service: 'naverworks_mail', recipients: ['a@example.invalid'], subject: '제목' };
-  const withHtml = asidePublishPrompt({ publication, body: BODY, htmlFile: 'C:/work/evidence/p1-본문.html' });
+  const withHtml = asidePublishPrompt({ publication, body: BODY, html: mailHtml(BODY) });
   assert.match(withHtml, /insertHTML/);
-  assert.match(withHtml, /C:\/work\/evidence\/p1-본문\.html/);
+  assert.ok(withHtml.includes(`<<<서식\n${mailHtml(BODY)}\n서식>>>`), '서식 HTML을 지시문에 그대로 싣는다(파일을 읽게 하지 않는다)');
   assert.match(withHtml, /<<<본문\n가상별 상담사님/, '원문 글자는 대조용으로 그대로 함께 준다');
   assert.doesNotMatch(asidePublishPrompt({ publication, body: BODY }), /insertHTML/);
-  assert.doesNotMatch(asidePublishPrompt({ publication: { action: 'web' }, body: '지침', htmlFile: 'x.html' }), /insertHTML/);
+  assert.doesNotMatch(asidePublishPrompt({ publication: { action: 'web' }, body: '지침', html: '<div>x</div>' }), /insertHTML/);
 });
