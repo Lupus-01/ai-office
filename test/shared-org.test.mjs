@@ -347,3 +347,45 @@ test('보관함 자료: 이 기능 전에 가져온 PC(표식에 자료 지문 �
   assert.equal(readFileSync(kitFile(member, '작성기준서.md'), 'utf8'), '# 기준\n');
   assert.equal(r.files.backup, null, '처음 받는 파일은 백업할 것이 없다');
 });
+
+// ERP 주소: 공개 저장소에는 자리 표시로 올리고, 받는 PC가 처음 가져올 때 한 번 입력한다
+test('ERP 주소: 올릴 때 자리 표시로 바꾸고, 받는 PC는 입력한 주소로 채워 기억한다', async (t) => {
+  const { ERP_PLACEHOLDER, cleanErp } = await import('../lib/shared-org.mjs');
+  const ERP = 'https://erp.example.invalid';
+  const owner = ownerPc(t), program = tempDir(t, 'office-shared-program-');
+  saveCompanyRules(owner, `가나다 대표의 회사 규칙\n실적 화면은 ${ERP}/erp/counselor-performance 이다.`);
+  const r = publishSharedOrg({ root: owner, program, names: ['가나다'], erp: `${ERP}/` });
+  assert.equal(r.erpReplaced, 1);
+  const text = readFileSync(sharedOrgFile(program), 'utf8');
+  assert.ok(text.includes(`${ERP_PLACEHOLDER}/erp/counselor-performance`));
+  assert.ok(!text.includes('erp.example.invalid'), '주소가 공개 파일에 남지 않는다');
+
+  // 주소 없이 가져와도 막지 않고, 자리 표시를 둔 채 주소가 필요하다고 알린다
+  const pc = tempDir(t, 'office-shared-pc-');
+  const first = await applySharedOrg({ root: pc, program, name: '홍길동' });
+  assert.equal(first.erpNeeded, true);
+  assert.ok(loadCompanyRules(pc).includes(ERP_PLACEHOLDER));
+  assert.equal(sharedOrgStatus({ root: pc, program }).erpNeeded, true);
+
+  // 주소를 한 번 주면 채우고 표식에 기억한다. 다음부터는 주소 없이도 같은 주소로 맞춘다
+  const second = await applySharedOrg({ root: pc, program, erp: ERP });
+  assert.equal(second.erpNeeded, false);
+  assert.ok(loadCompanyRules(pc).includes(`${ERP}/erp/counselor-performance`));
+  assert.equal(readSharedMarker(pc).erp, ERP);
+  saveCompanyRules(owner, `가나다 대표의 새 규칙\n실적 화면은 ${ERP}/erp/counselor-performance 이다.`);
+  publishSharedOrg({ root: owner, program, names: ['가나다'], erp: ERP });
+  await refreshSharedOrg({ root: pc, program });
+  assert.ok(loadCompanyRules(pc).includes(`새 규칙\n실적 화면은 ${ERP}/erp/`));
+  assert.equal(sharedOrgStatus({ root: pc, program }).erpNeeded, false);
+
+  // 주소 형식: https 도메인까지만
+  assert.equal(cleanErp('https://erp.example.invalid/'), ERP);
+  for (const bad of ['erp.example.invalid', 'http://erp.example.invalid', `${ERP}/erp/login`, 'https://user:pw@erp.example.invalid']) assert.throws(() => cleanErp(bad));
+});
+
+test('ERP 주소: 도메인만 적은 곳이 남아 있으면 올리지 않는다', (t) => {
+  const owner = ownerPc(t), program = tempDir(t, 'office-shared-program-');
+  saveCompanyRules(owner, '가나다 대표의 회사 규칙\n주소는 erp.example.invalid/erp 이다.');
+  assert.throws(() => publishSharedOrg({ root: owner, program, names: ['가나다'], erp: 'https://erp.example.invalid' }), /ERP 주소/);
+  assert.ok(!existsSync(sharedOrgFile(program)));
+});

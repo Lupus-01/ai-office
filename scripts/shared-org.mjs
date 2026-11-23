@@ -17,7 +17,7 @@ const USAGE = `사용법:
   node scripts/shared-org.mjs publish --name <이름>[,<이름>] [--check]`;
 
 function parse(args) {
-  const out = { yes: false, name: null, check: false };
+  const out = { yes: false, name: null, erp: null, check: false };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--yes' || a === '-y') out.yes = true;
@@ -26,6 +26,10 @@ function parse(args) {
       out.name = args[++i];
       if (out.name === undefined) throw new Error('--name 뒤에 이름을 적으세요.');
     } else if (a.startsWith('--name=')) out.name = a.slice(7);
+    else if (a === '--erp') {
+      out.erp = args[++i];
+      if (out.erp === undefined) throw new Error('--erp 뒤에 ERP 주소를 적으세요.');
+    } else if (a.startsWith('--erp=')) out.erp = a.slice(6);
     else throw new Error(`알 수 없는 인자입니다: ${a}`);
   }
   return out;
@@ -46,13 +50,17 @@ async function main([cmd, ...rest]) {
     console.log(`함께 받는 보관함 자료: ${s.files.total ? `파일 ${s.files.total}개` : '없음'} (${s.files.dirs.map((d) => `보관함/${d}`).join(', ')})`);
     if (s.subscribed) console.log(`가져옴: 담당자 이름 ${s.name} · ${s.appliedAt} · ${s.upToDate ? '최신' : '새 버전 있음(서버를 다시 켜거나 apply)'}`);
     else console.log('아직 가져오지 않았습니다.');
+    if (s.erpNeeded) console.log('ERP 주소가 아직 없습니다. 상담사관리부 업무를 쓰려면 한 번 알려 주세요: node scripts/shared-org.mjs apply --erp <ERP 주소>');
+    else if (s.erp) console.log('ERP 주소: 입력됨');
     return;
   }
   if (cmd === 'apply') {
     if (!isCompatRoot(root, program)) ensureWorkspace(root, { program });
-    const r = await applySharedOrg({ root, program, name: opts.name ?? undefined, force: opts.yes });
+    const r = await applySharedOrg({ root, program, name: opts.name ?? undefined, erp: opts.erp ?? undefined, force: opts.yes });
     console.log(`공유 회사 구성을 가져왔습니다: ${describe(r.summary)} · 담당자 이름 ${r.name}`);
     console.log(`에이전트 파일: 생성·갱신 ${r.sync.changed.length}개, 삭제 ${r.sync.removed.length}개`);
+    if (r.erpNeeded) console.log('ERP 주소가 아직 없습니다. 상담사관리부 업무(상담사 메일 등)를 쓰려면 한 번 알려 주세요: node scripts/shared-org.mjs apply --erp <ERP 주소>');
+    else if (r.erp) console.log('ERP 주소: 입력됨(이 PC에만 저장)');
     if (r.backup) console.log(`바꾸기 전 구성 백업: ${r.backup}`);
     if (r.files.total) console.log(`보관함 자료(양식 등): ${r.files.total}개 중 ${r.files.copied.length}개를 넣음${r.files.backup ? ` · 바꾸기 전 파일 백업: ${r.files.backup}` : ''}`);
     console.log('앞으로 서버를 켤 때 새 버전이 있으면 자동으로 맞춥니다(이 PC에서 고친 부서·지침·양식은 덮어쓰고, 바꾸기 전 것은 .office/shared-org-backups/에 남깁니다). 그만두려면 stop.');
@@ -67,7 +75,7 @@ async function main([cmd, ...rest]) {
     if (!names.length) throw new Error('공개 파일에서 뺄 이름을 --name으로 지정하세요.');
     // 보관함 자료의 흔적 검사를 먼저 한다(흔적이 있으면 회사 구성도 쓰지 않는다)
     await publishSharedFiles({ root, program, names, dryRun: true });
-    const r = publishSharedOrg({ root, program, names, dryRun: opts.check });
+    const r = publishSharedOrg({ root, program, names, erp: opts.erp, dryRun: opts.check });
     const counts = Object.values(r.replaced).reduce((a, b) => a + b, 0);
     const head = r.dryRun ? (r.changed ? '올리면 공유 파일이 바뀝니다(미리 보기, 쓰지 않음)' : '바뀐 내용이 없습니다') : r.changed ? '공유 파일을 썼습니다' : '바뀐 내용이 없습니다';
     console.log(`${head}: ${SHARED_ORG_REL} · ${describe(r.summary)} · 이름 ${counts}곳을 자리 표시로 바꿈`);

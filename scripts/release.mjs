@@ -14,11 +14,13 @@ import { SHARED_FILES_REL, SHARED_ORG_REL, publishSharedFiles, publishSharedOrg 
 import { gitRunner, releaseProgram, updateMessage } from '../lib/updates.mjs';
 
 function parse(args) {
-  const out = { name: null, check: false, yes: false };
+  const out = { name: null, erp: null, check: false, yes: false };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--name') out.name = args[++i] ?? '';
     else if (a.startsWith('--name=')) out.name = a.slice(7);
+    else if (a === '--erp') out.erp = args[++i] ?? '';
+    else if (a.startsWith('--erp=')) out.erp = a.slice(6);
     else if (a === '--check') out.check = true;
     else if (a === '--yes' || a === '-y') out.yes = true;
     else throw new Error(`알 수 없는 인자입니다: ${a}`);
@@ -31,6 +33,7 @@ function printShared(shared) {
   const replaced = Object.values(shared.replaced).reduce((a, b) => a + b, 0);
   const prev = shared.previousPlaceholders;
   console.log(`회사 구성: 부서 ${s.departments}개 · 직원 ${s.roster}명 · 실명 ${replaced}곳을 자리 표시로 바꿈(자리 표시 ${shared.placeholders}곳${prev === null ? '' : `, 지난번 ${prev}곳`})`);
+  if (shared.erpReplaced) console.log(`ERP 주소 ${shared.erpReplaced}곳을 자리 표시로 바꿈(받는 PC가 처음 가져올 때 입력)`);
   for (const c of shared.changes) console.log(`  - ${c}`);
   const f = shared.files;
   if (!f) return;
@@ -50,13 +53,15 @@ async function main(args) {
   })();
   const names = opts.name !== null ? opts.name.split(',').map((s) => s.trim()).filter(Boolean) : Array.isArray(saved.names) ? saved.names : [];
   if (!names.length) throw new Error('공개 파일에서 뺄 실명을 처음 한 번 --name <실명>으로 알려 주세요.');
+  // 내부 관리 사이트(ERP) 주소도 실명처럼 처음 한 번 알려 주면 기억하고, 올릴 때 자리 표시로 바꾼다
+  const erp = opts.erp !== null ? opts.erp.trim() : typeof saved.erp === 'string' ? saved.erp : '';
   const r = await releaseProgram({
     git: gitRunner(program),
     check: opts.check,
     expectedPush: saved.pushUrl || null,
     publish: async ({ dryRun }) => {
       // 먼저 미리 보기로 자리 표시 수를 보고, 줄었으면 쓰기 전에 멈춘다
-      const preview = publishSharedOrg({ root, program, names, dryRun: true });
+      const preview = publishSharedOrg({ root, program, names, erp: erp || null, dryRun: true });
       if (!dryRun && !opts.yes && preview.previousPlaceholders !== null && preview.placeholders < preview.previousPlaceholders) {
         printShared(preview);
         throw new Error(`자리 표시가 지난번 ${preview.previousPlaceholders}곳에서 ${preview.placeholders}곳으로 줄었습니다. 실명을 잘못 적었으면 실명이 그대로 공개될 수 있어 멈췄습니다. 지침에서 실명을 뺀 게 맞으면 --yes를 붙이세요.`);
@@ -64,12 +69,12 @@ async function main(args) {
       // 보관함 자료도 먼저 미리 보기로 흔적을 검사한다(흔적이 있으면 회사 구성도 쓰기 전에 멈춘다)
       const filesPreview = await publishSharedFiles({ root, program, names, dryRun: true });
       if (dryRun) return { ...preview, files: filesPreview };
-      return { ...publishSharedOrg({ root, program, names }), files: await publishSharedFiles({ root, program, names }) };
+      return { ...publishSharedOrg({ root, program, names, erp: erp || null }), files: await publishSharedFiles({ root, program, names }) };
     },
   });
-  if (opts.name !== null || (r.pushed && !saved.pushUrl)) {
+  if (opts.name !== null || opts.erp !== null || (r.pushed && !saved.pushUrl)) {
     mkdirSync(join(program, '.office'), { recursive: true });
-    writeFileAtomic(configFile, JSON.stringify({ ...saved, names, ...(r.pushed && !saved.pushUrl ? { pushUrl: r.url } : {}) }, null, 2) + '\n');
+    writeFileAtomic(configFile, JSON.stringify({ ...saved, names, ...(erp ? { erp } : {}), ...(r.pushed && !saved.pushUrl ? { pushUrl: r.url } : {}) }, null, 2) + '\n');
   }
   printShared(r.shared);
   if (r.check) {
