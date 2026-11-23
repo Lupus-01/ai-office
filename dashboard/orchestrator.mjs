@@ -78,6 +78,7 @@ export async function orchestrate({ root, run, prompt, execute: runAI, signal, m
     return engine === 'aside' && !asideInstalled() ? fallbackEngine(dept) : engine;
   };
   const asideStaff = () => org.roster.filter((a) => a.active !== false && org.departments.find((d) => d.id === a.department)?.active !== false && engineFor(a.id) === 'aside');
+  const worksMail = () => (outbound?.connections?.() || []).filter((c) => c.provider === 'naverworks' && c.status === 'connected');
   const isAsideWork = (item) => typeof item?.agent === 'string' && engineFor(item.agent) === 'aside';
   const videoPolicy = run.schedule?.uniqueYoutube ? run.schedule : null;
   const videoExclusions = join(taskDir, 'video-exclusions.json');
@@ -284,6 +285,8 @@ export async function orchestrate({ root, run, prompt, execute: runAI, signal, m
       '연결된 일반 웹사이트(관리자 화면 등)에서 자료를 조회·추출해야 하는 단계는 stage.connection에 그 연결 계정 id, stage.target에 시작 주소(대표가 준 링크 또는 연결의 시작 주소)를 넣으세요. 담당 직원이 읽기 전용 브라우저로 조회해 output 파일에 정리합니다. 이 단계에서는 그 연결 사이트 안의 화면만 볼 수 있고 웹 검색이나 다른 사이트(영상·기사·공개 자료 등)는 열 수 없습니다(로그인된 화면 내용이 밖으로 새지 않게). 다른 공개 웹 자료가 필요하면 connection 없는 별도 단계로 나누고 사이트 조회 결과를 inputs로 받게 하세요. 대표가 링크를 주면 허용 도메인이 맞는 연결 계정을 고르세요. 그 밖의 단계는 connection·target을 빈 문자열로 둡니다. done에는 대표가 요구한 항목과 그 목적(예: 연락하려면 연락처)에 필요한 항목을 빠짐없이 넣으세요. 대표가 조사·참고 범위를 정했으면(특정 회원의 글만, 특정 메뉴만 등) 그 범위 밖의 조회(공지·규칙·다른 게시판 둘러보기 등)는 done에 넣지 마세요. 글을 올릴 곳은 대표가 준 주소나 참고한 자료(예: 참고한 글이 있는 게시판)에서 정합니다.',
       '공개 페이지를 브라우저 화면으로 직접 봐야 하는 단계(WebFetch로 내용이 잘리는 동적 페이지, 유튜브 조회수 확인 등)는 stage.connection을 "public", stage.target에 시작 주소를 넣으세요. 계정 없는 브라우저와 웹 도구를 함께 받습니다. 일반 검색은 connection 빈 문자열로 충분합니다.',
       asideStaff().length ? `Aside 브라우저 직원(엔진 aside): ${JSON.stringify(asideStaff().map((a) => ({ id: a.id, name: a.name, department: a.department })))}. 로그인해야 하는 사이트의 조회 단계와 메일·글·댓글·웹사이트 작업(publications)은 이 직원에게 맡기세요. 그 단계·외부 작업의 connection은 "${ASIDE_CONNECTION}"(대표가 Aside 브라우저에 로그인해 둔 계정)으로 쓰고 target에 시작 주소를 넣습니다. Aside 직원은 대표의 Aside 로그인을 쓰므로 계정 연결이 없어도 됩니다. Aside 직원은 파일(엑셀·HTML·문서)을 만들지 않고 글자 결과(md·json·txt)만 돌려주므로, 문서·보고서 작성과 공개 웹 조사(connection "public" 또는 빈 문자열)는 다른 직원에게 맡기세요.` : '',
+      // 네이버웍스 메일이 계정 연결에 있으면 메일은 연결 계정 브라우저로 보낸다(정해진 순서로 입력해 Aside 직원보다 빠르고 본문 서식이 확실하다)
+      asideStaff().length && worksMail().length ? `예외: 메일(naverworks_mail) publication은 Aside 직원에게 맡기지 않습니다. 계정 연결에 네이버웍스 메일 계정(id ${worksMail().map((c) => c.id).join(', ')})이 연결돼 있으니 connection에 그 id를 쓰고, agent는 Aside가 아닌 직원(본문을 쓴 단계의 직원)으로 지정하세요.` : '',
       '앞 단계 id를 inputs와 dependsOn에 넣으세요. report/summary/findings/analysis로 시작하는 .md 이름은 쓰지 마세요.',
       `파일 조회 기준 폴더는 작업 공간 ${root}입니다. .office/… 등 요청의 상대 원본 경로는 작업 공간 기준입니다. inputs에는 앞 단계 id 또는 작업 공간 내부 원본의 절대 경로를 쓰세요. 기존 업무 상대 입력도 지원합니다. 파일 부재를 묻기 전에 Read/Glob으로 작업 공간과 업무 폴더를 확인하세요. 경로 검사 실패는 먼저 계획을 수정하고 실제로 있는 원본의 복구를 대표에게 요구하지 마세요.`,
       'plan.goal은 업무를 알아보기 쉬운 짧은 한국어 이름으로 쓰세요(최종산출물 폴더 이름이 됩니다). 대표에게 전달할 단계의 title은 대표가 받는 파일 이름이 됩니다. 내용을 바로 알 수 있는 한국어 이름으로 지으세요(예: 업무 내용·대상·조건이 드러나게). 작업 파일 output 이름은 지금 규칙대로 둡니다.',
