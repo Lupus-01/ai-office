@@ -15,7 +15,7 @@ import { stageResult, outputIssues, HTML_BRIEF } from '../lib/work-result.mjs';
 import { programRoot } from '../lib/paths.mjs';
 import { BUDGET_WARN_RATIO, MAX_MAILS_PER_RUN, MAX_PLAN_REVISIONS, MAX_PROGRESS_CHECKS, externalActionPolicy, isDraftOnly } from '../lib/guardrails.mjs';
 import { mailKey, preparePublications, splitMailBatch } from '../lib/publications.mjs';
-import { mailPreviewHtml } from '../lib/mail-preview.mjs';
+import { mailPreviewHtml, writeMailPreview } from '../lib/mail-preview.mjs';
 import { attachmentQuestion, attachmentRef, blockedReason, pickChoices, resolveAttachments } from '../lib/attachments.mjs';
 import { collectFinalOutputs } from '../lib/final-outputs.mjs';
 import { checkSources, sourceProblemReason } from '../lib/source-check.mjs';
@@ -702,6 +702,8 @@ export async function orchestrate({ root, run, prompt, execute: runAI, signal, m
         const notices = officeKind(stage.output) ? officeNotices(safeOutput(stage.output), { previewTool: canRunScripts(stage.dept) && Boolean(findSoffice()) }) : [];
         if (notices.length && attempt === 0) { issue = notices.join(' '); continue; }
         state.outputNotes = { ...(state.outputNotes || {}), [stage.id]: notices };
+        // 메일 문안 JSON이면 같은 이름의 미리보기 HTML을 실행기가 만든다(직원이 명령을 실행하지 못해도 발송 서식 그대로 확인할 수 있게)
+        writeMailPreview(safeOutput(stage.output), stage.title);
         state.completed[stage.id] = hash;
         persist();
         emit('agent.stop', { engine, agent: stage.agent, instance: `${run.id}-${stage.id}`, summary: redact(result.summary || text), files: [relative(root, safeOutput(stage.output)).replace(/\\/g, '/')] });

@@ -35,3 +35,24 @@ test('본문과 제목의 꺾쇠·따옴표는 글자로만 보인다', () => {
   assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
   assert.match(html, /&lt;b&gt;제목&lt;\/b&gt;/);
 });
+
+test('문안 JSON 옆에 미리보기를 쓰고, 메일 문안이 아닌 JSON은 건드리지 않는다', async (t) => {
+  const { mkdtempSync, writeFileSync, existsSync, readFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { writeMailPreview, mailPreviewPath } = await import('../lib/mail-preview.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'office-mail-preview-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const draft = join(dir, '문안.json');
+  writeFileSync(draft, JSON.stringify({ messages: [{ recipients: ['a@example.invalid'], subject: '제목', body: formatted }], skipped: ['제외: 가상달'] }));
+  const out = writeMailPreview(draft, '11월 상담사 메일');
+  assert.equal(out, mailPreviewPath(draft));
+  assert.match(readFileSync(out, 'utf8'), /메일 1통 · 보내지 않는 대상 1건/);
+  // 글·댓글 묶음(받는사람 없음)이나 다른 JSON, 깨진 파일은 미리보기를 만들지 않는다
+  for (const [name, body] of [['posts.json', JSON.stringify({ messages: [{ subject: '글', body: '본문' }] })], ['data.json', JSON.stringify({ rows: [] })], ['broken.json', '{']]) {
+    const f = join(dir, name); writeFileSync(f, body);
+    assert.equal(writeMailPreview(f), null);
+    assert.ok(!existsSync(mailPreviewPath(f)));
+  }
+  assert.equal(writeMailPreview(join(dir, 'report.md')), null);
+});

@@ -470,7 +470,8 @@ test/                     node:test
   - 첫 실행 전 확인(web-confirm)에는 이번에 보낼 20통만 보여 주고 남은 통수를 안내한다.
 - 메일 미리보기(`lib/mail-preview.mjs`): 받는 사람마다 한 통씩 나가는 메일을 한 HTML 파일로 묶어 발송 전에 넘겨 보게 한다. 본문은 발송 때와 같은 서식(`mailHtml`)으로 그리고 글자는 바꾸지 않는다. 스크립트 없이 열린다.
   - 실행 전 확인(web-confirm)에 메일이 있으면 실행기가 준비된 메일 전부를 `outputs/<업무>/메일-미리보기.html`에 쓰고 질문 끝에 위치를 알린다. 메일마다 "이번에 보냄"·"다음 차례"·"이미 보냄"을 표시한다. 만들지 못해도 발송 흐름은 막지 않는다.
-  - 발송하지 않는 준비 업무는 직원이 `node scripts/office.mjs mail preview <문안.json> [--out <파일.html>] [--title "…"]`로 만든다. 입력은 문안 JSON(`{messages:[{recipients, subject, body}], skipped}`)이고, 읽고 쓰는 경로는 작업 공간 안으로 제한한다.
+  - 단계 산출물이 메일 문안 JSON(받는사람이 있는 `messages`)이면 단계가 끝날 때 실행기가 같은 이름의 `-미리보기.html`을 옆에 쓴다(`writeMailPreview`). 그 단계가 deliverables면 미리보기도 `<단계 제목> 미리보기.html`로 함께 전달한다. 직원이 명령을 실행하지 못해도 발송 서식 그대로 확인할 수 있다.
+  - 손으로 다시 만들 때는 `node scripts/office.mjs mail preview <문안.json> [--out <파일.html>] [--title "…"]`로 만든다. 입력은 문안 JSON(`{messages:[{recipients, subject, body}], skipped}`)이고, 읽고 쓰는 경로는 작업 공간 안으로 제한한다.
 
 ### 위임과 실행 전 확인
 
