@@ -32,11 +32,11 @@ test('서식 단서가 없는 본문은 꾸미지 않는다', () => {
 test('글자는 그대로 두고 구획 제목·요약 표·번호 줄만 꾸민다', () => {
   const html = mailHtml(BODY);
   assert.equal(squash(mailHtmlText(html)), squash(BODY), '공백을 뺀 글자 순서가 원문과 같다(원문 대조용)');
-  assert.match(html, /<div style="[^"]*border-left:4px solid[^"]*font-weight:700[^"]*">■ 한눈에 보기<\/div>/);
+  assert.match(html, /<div style="[^"]*border-left:4px solid[^"]*font-weight:700[^"]*"><span style="[^"]*">■<\/span> 한눈에 보기<\/div>/);
   assert.equal(html.split('<table').length - 1, 1, '이어진 요약 줄은 표 하나로 묶는다');
   assert.equal(html.split('<tr>').length - 1, 2);
-  assert.match(html, /<td style="[^"]*white-space:nowrap[^"]*">· 상담<\/td><td style="[^"]*font-weight:700[^"]*">5건 \(최근 30일\)<\/td>/);
-  assert.match(html, /<div style="margin-top:10px;font-weight:700[^"]*">1\. 접속 시간을 정해 주세요<\/div><div style="padding-left:18px[^"]*">접속해 계셔야 상담이 연결됩니다\.<\/div>/);
+  assert.match(html, /<td style="[^"]*background:[^"]*">· 상담<\/td><td style="[^"]*font-weight:700[^"]*">5건 <span style="[^"]*font-weight:400[^"]*">\(최근 30일\)<\/span><\/td>/, '값은 굵게, 괄호 안 기준 기간은 옅게');
+  assert.match(html, /<div style="[^"]*border-left:4px solid[^"]*"><div style="[^"]*font-weight:700[^"]*">1\. 접속 시간을 정해 주세요<\/div><div style="[^"]*">접속해 계셔야 상담이 연결됩니다\.<\/div><\/div>/, '번호 줄과 설명은 상자 하나로 묶는다');
   assert.match(html, /font-weight:700[^"]*">2\) 단골 고객께 후기를 부탁해 보세요<\/div>/);
   assert.match(html, /- 상담 뒤 안부 인사 &lt;예시&gt; &amp; &quot;한 줄&quot;/, '꺾쇠·따옴표는 글자로 남긴다');
   assert.doesNotMatch(html, /<script|javascript:|onerror|<img|<a /i);
