@@ -672,6 +672,12 @@ export function createRunner({ root, onChange, judge = null, maxConcurrent = 4, 
         control ? { engine: control.engine, effort: control.effort } : effort ? { effort } : {});
       if (readOnly && childSpec.engine === 'codex') childSpec.args[childSpec.args.indexOf('-s') + 1] = 'read-only';
       if (readOnly && childSpec.engine === 'claude') childSpec.args.push('--tools', 'Read,Glob,Grep');
+      // 검토된 원문을 그대로 넣는 게시·발송은 판단할 것이 거의 없다. Aside 생각 강도를 낮추고 대기 한도를 10분으로 줄여 건당 시간을 줄인다(결과는 실행기가 화면으로 다시 대조한다)
+      if (childSpec.engine === 'aside' && phase === 'publish') {
+        const at = childSpec.args.indexOf('--timeout');
+        if (at >= 0) childSpec.args[at + 1] = '10m';
+        if (!childSpec.args.includes('--effort')) childSpec.args.splice(childSpec.args.length - 1, 0, '--effort', 'low');
+      }
       childSpec.phase = phase;
       childSpec.env = { ...childSpec.env, OFFICE_ORCHESTRATOR_CHILD: '1' };
       // Aside 직원은 자기 브라우저를 쓴다(office_browser 도구·응답 형식 인자를 붙이지 않고, 형식은 지시문으로 정한다)
