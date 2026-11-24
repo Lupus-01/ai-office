@@ -707,6 +707,15 @@ export function createRunner({ root, onChange, judge = null, maxConcurrent = 4, 
       const childRun = addRun(childSpec, agentId || 'chief', phase === 'stage' ? prompt : `${phase === 'plan' ? '업무 계획' : phase === 'meeting' ? '업무 회의' : phase === 'progress' ? '진행 점검' : '산출물 검토'}: ${run.request}`,
         { parentId: run.id, rootId: run.rootId, task: run.task });
       children.add(childRun.id);
+      // 멈춤 알림: 한 실행이 평소보다 훨씬 오래 걸리면 끝날 때까지 기다리지 않고 바로 알린다(실행을 끊지는 않는다. 한 실행에 두 번까지)
+      const slowTimers = (childSpec.engine === 'aside' ? [5, 15] : [15, 40]).map((minutes) => {
+        const timer = setTimeout(() => emit({ engine: childSpec.engine, session: `run-${childRun.id}`, instance: `run-${childRun.id}`, agent: agentId || 'chief', kind: 'flow.notice', run: childRun.id, ...(run.task ? { task: run.task } : {}),
+          summary: `${agentId || '비서실장'} 실행이 ${minutes}분째 끝나지 않고 있습니다. ${childSpec.engine === 'aside' ? 'Aside 창에 권한 요청이나 로그인 화면이 떠 있지 않은지 확인해 주세요.' : '멈춘 것 같으면 대시보드에서 중지할 수 있습니다.'}` }), minutes * 60000);
+        timer.unref?.();
+        return timer;
+      });
+      const clearSlow = () => slowTimers.forEach((timer) => clearTimeout(timer));
+      completed.then(clearSlow, clearSlow);
       if (deadlineAt !== null) {
         deadlineTimer = setTimeout(() => stop(childRun.id), Math.min(2147483647, Math.max(0, deadlineAt - Date.now())));
         deadlineTimer.unref?.();
