@@ -223,6 +223,16 @@ export async function orchestrate({ root, run, prompt, execute: runAI, signal, m
     return '대표 결정으로 업무를 끝냈습니다. 지금까지의 산출물은 업무 폴더에 남아 있습니다.';
   }
   // 예산 점검: 80%를 쓰면 대표에게 계속할지 묻는다. 대표가 없는 예약·상시 감시 업무는 묻지 않고 100%에서 이 주기만 멈춘다
+  // 구간별 걸린 시간(대표 답·로그인 대기 제외): 처음 그 구간에 들어간 때의 작업 시간을 적어 두었다가 완료 보고에 붙인다(느려진 곳이 바로 보이게)
+  const mark = (name) => { state.marks = { ...(state.marks || {}) }; if (state.marks[name] === undefined) state.marks[name] = activeMs(); };
+  const span = (ms) => (ms < 90000 ? `${Math.max(0, Math.round(ms / 1000))}초` : `${Math.round(ms / 6000) / 10}분`);
+  const timingLine = () => {
+    const m = state.marks || {}, total = activeMs();
+    if (m.plan === undefined) return '';
+    const review = m.review ?? total, publish = m.publish ?? total;
+    return `계획 ${span(m.plan)} · 실무 ${span(review - m.plan)} · 검토·재작업 ${span(Math.max(0, publish - review))}${m.publish !== undefined ? ` · 외부 작업 ${span(total - publish)}` : ''} · 합계 ${span(total)}${state.recipe ? ' (고정 절차)' : ''}${state.reviewRejects ? ` · 반려 ${state.reviewRejects}회` : ''}`;
+  };
+  const timingText = () => (timingLine() ? `\n\n## 걸린 시간\n\n- ${timingLine()}\n- 대표 답변·로그인을 기다린 시간은 빼고 셉니다.` : '');
   const budgetText = () => `AI 호출 ${state.budget.calls}/${state.budget.limitCalls}회, 작업 ${Math.round(activeMs() / 60000)}/${Math.round(state.budget.limitMs / 60000)}분`;
   const overBudget = () => {
     const ratio = Math.max(state.budget.calls / state.budget.limitCalls, activeMs() / state.budget.limitMs);
@@ -535,6 +545,7 @@ export async function orchestrate({ root, run, prompt, execute: runAI, signal, m
   writeFileAtomic(join(taskDir, 'plan.json'), JSON.stringify(plan, null, 2) + '\n');
   writeFileAtomic(join(taskDir, 'brief.md'), `# ${redactContext(plan.goal)}\n\n${plan.stages.map((s) => `- ${s.id}: ${s.agent} / ${s.output} / ${s.done}`).join('\n')}`);
   persist();
+  mark('plan');
   emit('plan.set', { plan: compactPlan(plan, { taskId: task, root }) });
   // 필요한 계정은 작업 전에 확인한다(조사·작성을 다 마친 뒤 마지막 게시 단계에서야 묻지 않게)
   {
@@ -930,6 +941,7 @@ export async function orchestrate({ root, run, prompt, execute: runAI, signal, m
       if (stopBeforeReview) return stopBeforeReview;
       const prepared = preparePublications(plan, (path) => readFileSync(safeOutput(path), 'utf8'),
         { excludedVideos: outbound?.videoHistory?.(run.rootId) || [], videoPolicy });
+      mark('review');
       emit('flow.review_request', { summary: '단계 산출물 검토를 요청했습니다.' });
       const reviewSignature = createHash('sha256').update(JSON.stringify([plan, state.completed, state.reviewGeneration, state.rejects])).digest('hex');
       const cached = state.approvedReview?.signature === reviewSignature ? state.approvedReview : null;
@@ -1060,6 +1072,7 @@ export async function orchestrate({ root, run, prompt, execute: runAI, signal, m
               checkStop();
             }
           }
+          mark('publish');
           const instance = `${run.id}-publish-${publication.id || publications.length}`;
           const engine = engineFor(publication.agent);
           emit('agent.start', { engine, agent: publication.agent, instance, summary: engine === 'aside' ? '검토된 원문의 외부 작업을 Aside 직원이 시작합니다.' : '검토된 원문의 외부 작업을 시작합니다.' });
@@ -1147,8 +1160,9 @@ export async function orchestrate({ root, run, prompt, execute: runAI, signal, m
         const report = review.report + ((plan.publications || []).length ? '\n\n## 외부 작업 결과\n\n' + (publications.join('\n') || '- 실제 발송·게시 0건: 확인된 대상이 없습니다.')
           + (videoPolicy ? `\n\n영상 게시 ${posted}건 / 목표 ${videoPolicy.minPosts}~${videoPolicy.maxPosts}건.${posted < videoPolicy.minPosts ? ' 조건에 맞는 중복 없는 새 영상이 부족해 목표 수를 채우지 않았습니다.' : ''}`
             + (videoPolicy.infoPosts || infoPosted ? ` 영상이 아닌 글 ${infoPosted}건${videoPolicy.infoPosts ? ` / 최대 ${videoPolicy.infoPosts}건` : ''}.` : '') : '')
-          + (prepared.skipped.length ? '\n\n확인 필요:\n' + prepared.skipped.map((s) => '- ' + redactContext(s)).join('\n') : '') : '');
+          + (prepared.skipped.length ? '\n\n확인 필요:\n' + prepared.skipped.map((s) => '- ' + redactContext(s)).join('\n') : '') : '') + timingText();
         writeFileAtomic(join(taskDir, 'report.md'), report);
+        if (timingLine()) emit('flow.notice', { summary: `걸린 시간: ${timingLine()}` });
         // 최종산출물 폴더 이름은 비서실장이 정리한 업무 목표(지시문 원문보다 알아보기 쉬움)
         try { collectFinalOutputs(root, { task, title: plan.goal || loadTasks(root).find((t) => t.id === task)?.title, plan, directory: state.intent?.outputDir || null }); }
         catch (error) { return ask([{ phase: 'deliver', question: `최종산출물을 저장하지 못했습니다. 회사 설정의 저장 위치·폴더 권한을 확인한 뒤 이어서 재개해 주세요. ${redactContext(error.message)}` }]); }
