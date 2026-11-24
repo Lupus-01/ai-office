@@ -17,6 +17,7 @@ import { BUDGET_WARN_RATIO, MAX_MAILS_PER_RUN, MAX_PLAN_REVISIONS, MAX_PROGRESS_
 import { mailKey, preparePublications, splitMailBatch } from '../lib/publications.mjs';
 import { mailPreviewHtml, writeMailPreview } from '../lib/mail-preview.mjs';
 import { mailHtml } from '../lib/mail-format.mjs';
+import { recipePlan } from '../lib/recipes.mjs';
 import { attachmentQuestion, attachmentRef, blockedReason, pickChoices, resolveAttachments } from '../lib/attachments.mjs';
 import { collectFinalOutputs } from '../lib/final-outputs.mjs';
 import { checkSources, sourceProblemReason } from '../lib/source-check.mjs';
@@ -439,6 +440,19 @@ export async function orchestrate({ root, run, prompt, execute: runAI, signal, m
     mkdirSync(dirname(join(root, editInput)), { recursive: true });
     copyFileSync(editSource.path, join(root, editInput));
   }
+  // 고정 절차: 의도 판별이 고른 정형 업무는 저장된 계획으로 바로 시작한다(비서실장 계획 호출 없음). 쓸 수 없으면 기존 계획 흐름으로 간다
+  let recipeReady = null;
+  if (!fastPlan && !saved.originalRequest && typeof intent?.recipe === 'string' && intent.recipe) {
+    const made = recipePlan(root, { id: intent.recipe, task, request: state.originalRequest, connections: outbound?.connections?.() || [], allowedActions: allowedActions() });
+    const check = made.plan ? validatePlan(made.plan, { root, org, taskId: task, fileExists: existsSync }) : null;
+    if (check?.ok) { try { for (const stage of made.plan.stages) safeOutput(stage.output, true); recipeReady = made.plan; } catch { recipeReady = null; } }
+    emit('flow.notice', { summary: recipeReady ? `고정 절차(${intent.recipe})로 계획 없이 바로 시작합니다.` : `고정 절차(${intent.recipe})를 쓸 수 없어 계획을 세웁니다: ${redact(made.reason || check?.errors?.join(' ') || '계획 검사 실패').slice(0, 200)}` });
+  }
+  if (recipeReady) {
+    state.recipe = intent.recipe;
+    response = { plan: recipeReady, rerunStages: [] };
+    plan = recipeReady;
+  } else
   // 빠른 조회는 전달할 문서를 만들지 않으므로 필수 전달 부서를 거치지 않는다
   if (fastPlan && validatePlan(fastPlan, { root, org, taskId: task, fileExists: existsSync, skipRequiredHandoffs: true }).ok) {
     state.quick = true;
