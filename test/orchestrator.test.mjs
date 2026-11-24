@@ -1392,3 +1392,16 @@ test('외부 작업 직원이 멈춘 이유와 질문을 그대로 대표에게 
   assert.equal(staffQuestion({ status: 'needs_decision' }), '', '내용이 없으면 호출한 쪽의 기본 문구를 쓴다');
   assert.equal(staffQuestion({ status: 'needs_decision', summary: '가'.repeat(3000) }).length, 2000);
 });
+
+test('최종 검토 재작업 한도: 전문 검토가 있는 업무도 두 번까지만 다시 하고 끝없이 되풀이하지 않는다', async (t) => {
+  const f = fixture(t, { reviewBy: 'codex', reviewerVerdict: 'PASS', review: (n) => ({ verdict: 'reject', stages: [{ id: 'a', reason: `지적 ${n}: 끝맺음 표현이 겹침` }], reason: `반려 ${n}`, report: '# 보고' }) });
+  const run = f.runner.start({ prompt: '검토가 필요한 업무' });
+  await f.final(run);
+  assert.equal(loadTasks(f.root)[0].status, 'done', f.runner.result(run.id).text);
+  assert.deepEqual([f.counts.a, f.counts.review], [3, 3], '재작업은 두 번, 검토는 세 번에서 멈춘다');
+  const report = f.runner.result(run.id).text;
+  assert.match(report, /재작업 한도로 고치지 못함/);
+  assert.match(report, /지적 3: 끝맺음 표현이 겹침/);
+  assert.match(f.calls.filter((c) => c.kind === 'review').at(-1).input, /이미 재작업을 2번 했습니다/);
+  assert.doesNotMatch(f.calls.filter((c) => c.kind === 'review')[1].input, /이미 재작업을 2번 했습니다/);
+});

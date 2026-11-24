@@ -30,6 +30,8 @@ import { LOGIN_WAIT_MS } from '../lib/browser-session.mjs';
 
 // 외부 작업·전문 검토가 없는 업무의 최종 검토 재작업 한도
 const MAX_REVIEW_REWORK = 1;
+// 외부 작업·전문 검토가 있는 업무도 재작업을 끝없이 되풀이하지 않는다(2026-11-24 글·댓글 업무가 문장 틀 지적으로 4번 반려돼 22분을 썼다)
+const MAX_REVIEW_REWORK_EXTERNAL = 2;
 // 계정 없이 공개 웹을 보는 단계의 예약 값(연결 계정 id가 아니다)
 const PUBLIC_CONNECTION = 'public';
 const waitFor = (ms, signal) => new Promise((resolve, reject) => {
@@ -934,7 +936,8 @@ export async function orchestrate({ root, run, prompt, execute: runAI, signal, m
         evidence.push({ reviewer: reviewer.id, verdict, text });
       }
       // 외부 작업·전문 검토가 없는 업무는 최종 검토 재작업을 한 번으로 제한한다. 반복 반려는 한 번에 3~4분씩 든다
-      const lastReview = !cached && state.reviewRejects >= MAX_REVIEW_REWORK && !(plan.publications || []).length && !reviewers.length;
+      const externalReview = Boolean((plan.publications || []).length || reviewers.length);
+      const lastReview = !cached && state.reviewRejects >= (externalReview ? MAX_REVIEW_REWORK_EXTERNAL : MAX_REVIEW_REWORK);
       // 간단한 수정이라 했는데 원본이 크게 사라졌으면 빠른 경로를 풀고 최종 검토를 받는다
       const editDiff = !cached && state.quick && state.quickEdit ? documentDiff(readFileSync(join(root, state.quickEdit.input)), readFileSync(join(root, state.quickEdit.output)), officeKind(state.quickEdit.output)) : null;
       if (editDiff?.large) {
@@ -947,7 +950,8 @@ export async function orchestrate({ root, run, prompt, execute: runAI, signal, m
         '비서실장으로서 산출물을 읽기 전용으로 검토하세요. JSON만 응답하세요.',
         '{verdict:"pass"|"reject"|"revise"|"block"|"question",stage:"빈 문자열(예전 형식)",stages:[{id:"고칠 단계 id",reason:"그 단계에서 고칠 점"}],reason:"근거",report:"보고서 Markdown",question:"질문 또는 빈 문자열",revisedPlan:null}',
         `reject: 산출물을 고치면 되는 단계를 stages에 모두 적고 단계마다 구체적인 수정 사항을 쓰세요(한 번에 묶어 반려). revise: 기존 단계로는 채울 수 없는 부족한 부분이 있으면 단계를 추가·변경한 전체 계획을 revisedPlan에 주세요. 완료된 단계는 그대로 두며, 남은 계획 수정 가능 횟수는 ${MAX_PLAN_REVISIONS - state.revisionCount}회입니다. 반려·보완을 할지, 확인 필요로 남기고 통과시킬지는 남은 예산을 보고 정하세요. 반려는 재작업으로 시간이 많이 듭니다. 외부 제출·재무·법률 자료가 아니면 사실 오류, 건수 미달, 깨진 출처처럼 대표 요청을 못 채운 경우에만 반려하고, 표기·형식·추가 근거 보완은 보고서의 확인 필요에 적고 통과시키세요. 최신 자료 요청에서 최근 며칠 안의 기사 선정·순서 차이와, 산출물에 이미 표시한 단일 출처·독립 출처 부족도 반려하지 말고 확인 필요에 적으세요.`,
-        lastReview ? '이 업무는 이미 재작업을 한 번 했습니다. 이번에는 반려·보완할 수 없으니 verdict를 pass로 하고, 남은 문제는 어떤 항목이 어떻게 틀렸는지 보고서의 확인 필요에 구체적으로 적으세요.' : '',
+        lastReview && !externalReview ? '이 업무는 이미 재작업을 한 번 했습니다. 이번에는 반려·보완할 수 없으니 verdict를 pass로 하고, 남은 문제는 어떤 항목이 어떻게 틀렸는지 보고서의 확인 필요에 구체적으로 적으세요.' : '',
+        lastReview && externalReview ? `이 업무는 이미 재작업을 ${MAX_REVIEW_REWORK_EXTERNAL}번 했습니다. 이번에는 반려·보완할 수 없습니다. 남은 문제가 문체·표현·형식이면 verdict를 pass로 하고 보고서의 확인 필요에 구체적으로 적으세요(전문 검토의 FIX가 남아 있어도 같다). 사실 오류·개인정보·대표가 정한 규칙 위반처럼 그대로 내보내면 안 되는 문제가 남았으면 verdict를 question으로 하고 대표에게 어떻게 할지 한 번에 물으세요.` : '',
         `계획: ${JSON.stringify(plan)}`, `검증실 결과: ${JSON.stringify(evidence)}`,
         evidence.length ? '검증실이 이미 확인한 항목은 다시 검토하지 말고 그 결론을 반영하세요. 당신은 대표 요청 충족·전달 가능성, 그리고 검증실이 다루지 않은 부분을 확인합니다.' : '',
         context(), plan.stages.some((s) => /\.html?$/i.test(s.output)) ? HTML_BRIEF : '',

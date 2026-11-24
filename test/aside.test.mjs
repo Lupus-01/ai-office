@@ -367,3 +367,46 @@ test('Aside 직원도 카페 공식 API가 연결된 네이버 계정이 있으�
     body: '문 열고 나갔다 돌아온 댕댕이\n\nhttps://www.youtube.com/shorts/jYsBJsmiOIc', execute: async () => JSON.stringify({ status: 'done', submitted: true, resultUrl: placeUrl }) });
   assert.equal(viaAside.method, 'aside'); assert.equal(g.apiPosts.length, 0);
 });
+
+// ---- 네이버 카페 댓글 직접 등록(AI 없이): 한 건에 직접 1번, 직원 실행은 누르기 전에 막힌 경우에만 1번 ----
+test('카페 댓글 직접 등록: 등록되면 직원을 부르지 않고 화면 대조로 확인한다', async (t) => {
+  const target = 'https://cafe.naver.com/f-e/cafes/1/articles/21';
+  const f = asideWork(t, { pages: { [target]: (n) => n === 1 ? '댓글 하나' : '댓글 하나 귀엽네요' } });
+  let direct = 0, runs = 0;
+  f.aside.cafeComment = async (url, body) => { direct++; assert.equal(url, target); assert.equal(body, '귀엽네요'); return { submitted: true, url: target }; };
+  const publication = { id: 'd1', action: 'comment', service: 'naver_cafe', connection: ASIDE_CONNECTION, target, recipients: [], subject: '' };
+  const result = await f.work.deliver({ ...baseDeliver, publication, body: '귀엽네요', execute: async () => { runs++; return ''; } });
+  assert.equal(result.status, 'confirmed'); assert.equal(direct, 1); assert.equal(runs, 0, '직접 등록되면 직원 실행은 없다');
+  await f.work.deliver({ ...baseDeliver, publication, body: '귀엽네요', execute: async () => { runs++; return ''; } });
+  assert.equal(direct, 1, '확인된 댓글은 다시 등록하지 않는다');
+});
+
+test('카페 댓글 직접 등록: 누르기 전에 막히면 직원 실행으로 한 번만 넘어간다', async (t) => {
+  const target = 'https://cafe.naver.com/f-e/cafes/1/articles/22';
+  const f = asideWork(t, { pages: { [target]: (n) => n === 1 ? '댓글 없음' : '댓글 없음 잘 봤어요' } });
+  let direct = 0, runs = 0;
+  f.aside.cafeComment = async () => { direct++; return { submitted: false, reason: '댓글 입력칸을 찾지 못했습니다' }; };
+  const publication = { id: 'd2', action: 'comment', service: 'naver_cafe', connection: ASIDE_CONNECTION, target, recipients: [], subject: '' };
+  const result = await f.work.deliver({ ...baseDeliver, publication, body: '잘 봤어요', execute: async () => { runs++; return '{"status":"done","submitted":true}'; } });
+  assert.equal(result.status, 'confirmed'); assert.equal(direct, 1); assert.equal(runs, 1);
+});
+
+test('카페 댓글 직접 등록: 눌렀는지 모르면 직원에게 다시 시키지 않고 불확실로 멈춘다(중복 댓글 방지)', async (t) => {
+  const target = 'https://cafe.naver.com/f-e/cafes/1/articles/23';
+  for (const fake of [async () => ({ submitted: null, reason: '등록을 눌렀지만 입력칸이 비워지지 않았습니다' }), async () => { throw new Error('Aside 응답이 너무 늦습니다.'); }]) {
+    const f = asideWork(t, { pages: { [target]: '댓글 없음' } });
+    let runs = 0;
+    f.aside.cafeComment = fake;
+    const publication = { id: 'd3', action: 'comment', service: 'naver_cafe', connection: ASIDE_CONNECTION, target, recipients: [], subject: '' };
+    await assert.rejects(f.work.deliver({ ...baseDeliver, publication, body: '안녕하세요', execute: async () => { runs++; return '{"status":"done","submitted":true}'; } }), /직접 등록 결과를 확인하지 못했습니다/);
+    assert.equal(runs, 0, '결과를 모를 때는 직원 실행으로 넘어가지 않는다');
+    assert.equal(records(f.root)[0].status, 'uncertain');
+    await assert.rejects(f.work.deliver({ ...baseDeliver, publication, body: '안녕하세요', execute: async () => { runs++; return ''; } }), /불확실/);
+    assert.equal(runs, 0, '불확실 기록이 있으면 다시 지시해도 실행하지 않는다');
+  }
+  // 눌렀는지 몰라도 화면에 댓글이 보이면 확인 완료로 끝난다
+  const g = asideWork(t, { pages: { [target]: (n) => n === 1 ? '댓글 없음' : '댓글 없음 안녕하세요' } });
+  g.aside.cafeComment = async () => ({ submitted: null, reason: '확인 지연' });
+  const done = await g.work.deliver({ ...baseDeliver, publication: { id: 'd4', action: 'comment', service: 'naver_cafe', connection: ASIDE_CONNECTION, target, recipients: [], subject: '' }, body: '안녕하세요', execute: async () => { throw new Error('실행되면 안 됨'); } });
+  assert.equal(done.status, 'confirmed');
+});
