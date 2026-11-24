@@ -477,6 +477,8 @@ export async function orchestrate({ root, run, prompt, execute: runAI, signal, m
           if (response.question?.trim()) return ask([{ phase: 'plan', question: response.question }]);
         }
         plan = response.plan;
+        // Aside 연결은 Aside 직원만 쓸 수 있다. 다른 직원 단계에 잘못 붙으면 "연결 계정을 찾을 수 없습니다"로 멈추므로 비운다(그 직원은 자기 도구로 일한다)
+        if (Array.isArray(plan?.stages)) plan = { ...plan, stages: plan.stages.map((stage) => (stage?.connection === ASIDE_CONNECTION && !isAsideWork(stage) ? { ...stage, connection: '', target: '' } : stage)) };
         const check = validatePlan(plan, { root, org, taskId: task, fileExists: existsSync });
         if (!check.ok) throw new Error(check.errors.join('\n'));
         if ((plan.publications || []).some((p) => !allowedActions().includes(p.action))) throw new Error('대표가 지시하지 않은 외부 발송·게시를 계획에서 제거하세요.');
