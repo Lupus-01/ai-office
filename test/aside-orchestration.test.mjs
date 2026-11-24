@@ -169,3 +169,45 @@ test('빠른 조회가 로그인 서비스 주소를 다루면 처음부터 Asid
   assert.ok(!f.calls.some((c) => c.kind === 'other'), 'Claude 직원(res-1)을 먼저 부르지 않는다');
 });
 
+
+test('게시 중 직원 질문: 그대로 진행하라는 답은 질문·답을 직원에게 함께 주고, 세 번째 되풀이에서 더 묻지 않고 멈춘다', async (t) => {
+  const target = 'https://cafe.naver.com/f-e/cafes/31520563/articles/10970';
+  let tries = 0;
+  const f = fixture(t, {
+    plan: (task) => ({ version: 1, task, goal: '댓글', stages: [stage(task, 'a', 'res-1', 'res', { output: `outputs/${task}/res/res-1-a.md` })], review: { by: 'chief', criteria: '문구 확인' }, gaps: [], deliverables: [],
+      publications: [{ id: 'c1', action: 'comment', service: 'naver_cafe', connection: 'aside', agent: 'biz-1', target, recipients: [], subject: '', content: 'a', instructions: '', files: [], attachments: [] }] }),
+    staff: () => { throw new Error('조사 단계는 Claude 직원'); },
+    publish: () => JSON.stringify({ status: 'needs_decision', submitted: false, question: '글 제목이 달라 보입니다. 그대로 등록할까요?' }),
+    staffFile: '잘 보고 갑니다 :)',
+    outbound: { deliver: async (args) => { tries++; await args.execute(null, { files: [] }); throw Object.assign(new Error('Aside 직원 확인 필요: 글 제목이 달라 보입니다. 그대로 등록할까요?'), { name: 'BrowserActionError' }); } },
+  });
+  const first = f.runner.start({ prompt: `${target} 글에 "잘 보고 갑니다 :)" 댓글 달아줘. 끝까지 자동으로 진행해` });
+  const one = await f.final(first);
+  assert.match(one.summary, /직원 확인 필요/, one.summary);
+  const two = await f.final(f.runner.reply(first.id, { prompt: '그대로 진행' }));
+  assert.match(two.summary, /직원 확인 필요/);
+  const withNote = f.calls.filter((c) => c.kind === 'aside' && /외부 작업 1건/.test(c.input)).at(-1).input;
+  assert.match(withNote, /앞선 실행에서 직원이 대표에게 물은 것/);
+  assert.match(withNote, /대표 답: 그대로 진행/);
+  const three = await f.final(f.runner.reply(first.id, { prompt: '그대로 진행' }));
+  assert.match(three.summary, /세 번 되풀이돼 업무를 멈췄습니다/);
+  assert.equal(tries, 3, '세 번째에서 멈추고 더 실행하지 않는다');
+});
+
+test('게시 중 직원 질문에 고치라고 답하면 같은 원문으로 다시 실행하지 않고 계획으로 돌아간다', async (t) => {
+  const target = 'https://cafe.naver.com/f-e/cafes/31520563/articles/10971';
+  let tries = 0, plans = 0;
+  const f = fixture(t, {
+    plan: (task) => { plans++; return { version: 1, task, goal: '댓글', stages: [stage(task, 'a', 'res-1', 'res', { output: `outputs/${task}/res/res-1-a.md` })], review: { by: 'chief', criteria: '문구 확인' }, gaps: [], deliverables: [],
+      publications: [{ id: 'c1', action: 'comment', service: 'naver_cafe', connection: 'aside', agent: 'biz-1', target, recipients: [], subject: '', content: 'a', instructions: '', files: [], attachments: [] }] }; },
+    staff: () => { throw new Error('조사 단계는 Claude 직원'); },
+    publish: () => JSON.stringify({ status: 'done', submitted: true }),
+    staffFile: '잘 보고 갑니다 :)',
+    outbound: { deliver: async (args) => { tries++; if (tries === 1) throw Object.assign(new Error('Aside 직원 확인 필요: 주소에 오타가 있어 보입니다. 고쳐서 보낼까요?'), { name: 'BrowserActionError' }); await args.execute(null, { files: [] }); return { status: 'confirmed', method: 'aside', resultUrl: args.publication.target }; } },
+  });
+  const first = f.runner.start({ prompt: `${target} 글에 "잘 보고 갑니다 :)" 댓글 달아줘. 끝까지 자동으로 진행해` });
+  await f.final(first);
+  assert.equal(plans, 1);
+  await f.final(f.runner.reply(first.id, { prompt: '권장대로 고쳐서 진행해줘' }));
+  assert.ok(plans >= 2, '고치라는 답이면 계획을 다시 세운다');
+});

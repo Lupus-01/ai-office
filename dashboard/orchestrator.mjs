@@ -417,9 +417,14 @@ export async function orchestrate({ root, run, prompt, execute: runAI, signal, m
   let response;
   let plan;
   // 실행 전 확인에 문안·대상을 고치라고 답하면 게시하지 않고 계획으로 돌아가 해당 단계를 다시 쓴 뒤 다시 확인받는다
+  // 게시 중 직원이 물은 질문(받는사람 오타 등): 답이 원문·대상을 고치라는 뜻이면 승인으로 판별됐어도 계획으로 돌아간다.
+  // 검토된 원문은 고정돼 있어 같은 실행을 되풀이하면 직원이 같은 질문을 또 한다(2026-11-23 주소 오타 질문이 세 번 반복됨)
+  const staffAsked = answering ? saved.pending?.find((q) => q.phase === 'publish' && q.staffQuestion) || null : null;
+  const staffFix = Boolean(staffAsked) && /고쳐|고치|바꿔|바꾸|수정|변경|정정|다른\s*주소/.test(prompt);
   const publicationCorrection = answering && (saved.pending?.some((q) => q.phase === 'publish')
-    && (answer?.source === 'ai' ? ['modify', 'decline'].includes(answer.decision) : /수정|변경|바꿔|초안|수신자|하지\s*마/.test(prompt))
+    && (staffFix || (answer?.source === 'ai' ? ['modify', 'decline'].includes(answer.decision) : /수정|변경|바꿔|초안|수신자|하지\s*마/.test(prompt)))
     || saved.pending?.some((q) => q.phase === 'web-confirm') && answer?.decision === 'modify');
+  if (staffAsked && !publicationCorrection) state.publishNote = { question: String(staffAsked.question).slice(0, 600), answer: redactContext(prompt).slice(0, 300) };
   // 옛 실행기는 검토 후 브라우저·전달 오류도 plan 질문으로 저장했다.
   // 명시 재개라면 승인된 계획을 재검사하며 완료 파일·검토를 재사용한다.
   // 계정이 비어 있던 계획은 계정을 등록한 뒤 다시 세워 새 계정을 쓰게 한다
@@ -1086,7 +1091,8 @@ export async function orchestrate({ root, run, prompt, execute: runAI, signal, m
               files: attachments, evidenceDir: join(taskDir, 'evidence'), engine,
               execute: async (browser, extra = {}) => {
                 const text = await execute({ phase: 'publish', agentId: publication.agent, browser,
-                prompt: engine === 'aside' ? asidePublishPrompt({ publication, body, web, files: extra.files || [], html: asideMailHtml.length <= 16000 ? asideMailHtml : '' }) : web ? [
+                prompt: engine === 'aside' ? asidePublishPrompt({ publication, body, web, files: extra.files || [], html: asideMailHtml.length <= 16000 ? asideMailHtml : '' })
+                  + (state.publishNote ? `\n\n앞선 실행에서 직원이 대표에게 물은 것: ${state.publishNote.question}\n대표 답: ${state.publishNote.answer}\n이 답대로 진행하고 같은 것을 다시 묻지 마세요. 답이 원문·받는사람·대상을 바꾸라는 뜻이면 실행하지 말고 needs_decision으로 "원문 수정이 필요합니다"라고만 보고하세요.` : '') : web ? [
                   '대표가 이번 업무에서 지시한 웹사이트 작업을 연결 계정의 브라우저로 실행합니다. 아래 지침대로 진행하고 지침에 없는 변경은 하지 마세요.',
                   `시작 주소: ${publication.target}`, `지침:\n${body}`,
                   attachments.length ? `첨부할 파일(browser_attach의 file 값): ${attachments.map((a) => a.name).join(', ')}` : '첨부 파일 없음',
@@ -1145,7 +1151,10 @@ export async function orchestrate({ root, run, prompt, execute: runAI, signal, m
               return ask([{ phase: 'publish', question: outcome.question }]);
             }
             emit('agent.pause', { engine, agent: publication.agent, instance, summary: redactContext(error.message) });
-            return ask([{ phase: 'publish', question: `외부 작업을 이어가기 위한 확인이 필요합니다. ${redactContext(error.message)}` }]);
+            const askKey = String(publication.id || index);
+            state.publishAsks = { ...(state.publishAsks || {}), [askKey]: (state.publishAsks?.[askKey] || 0) + 1 };
+            if (state.publishAsks[askKey] >= 3) return blocked(`같은 외부 작업에서 확인이 세 번 되풀이돼 업무를 멈췄습니다. 발송·게시는 되지 않았을 수 있으니 사이트에서 확인해 주세요. 받는사람·원문을 고쳐야 하면 고친 내용으로 새로 지시해 주세요. 마지막 사유: ${redactContext(error.message)}`);
+            return ask([{ phase: 'publish', staffQuestion: /직원 확인 필요/.test(String(error.message)), question: `외부 작업을 이어가기 위한 확인이 필요합니다. ${redactContext(error.message)}` }]);
           }
         }
         if (batch.remaining.length) {
