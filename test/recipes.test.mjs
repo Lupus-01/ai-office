@@ -71,3 +71,23 @@ test('의도 판별: 등록된 절차 id만 인정하고, 빠른 조회·상시 
     assert.equal((await run({ ...base, quick: true, quickAgent: 'biz-1', recipe: 'care-mail-prepare' })).r.recipe, '');
   } else assert.ok(!hit.r.recipe, '판별을 못 하면 절차를 쓰지 않는다');
 });
+
+test('시작 전 점검: 보관함 도구만 --check로 실행하고, 실패하면 도구의 마지막 줄을 사유로 돌려준다', async (t) => {
+  const { recipePreflight } = await import('../lib/recipes.mjs');
+  const tool = '보관함/시험/도구/check.cjs';
+  const root = workspace(t, [
+    { id: 'pass-one', when: 'x', preflight: [{ tool }], plan: { stages: [stage()] } },
+    { id: 'fail-one', when: 'x', preflight: [{ tool: '보관함/시험/도구/fail.cjs' }], plan: { stages: [stage()] } },
+    { id: 'outside', when: 'x', preflight: [{ tool: '../밖/도구/x.cjs' }], plan: { stages: [stage()] } },
+    { id: 'not-tool', when: 'x', preflight: [{ tool: 'org/recipes.json' }], plan: { stages: [stage()] } },
+    { id: 'none', when: 'x', plan: { stages: [stage()] } },
+  ]);
+  mkdirSync(join(root, '보관함', '시험', '도구'), { recursive: true });
+  writeFileSync(join(root, '보관함', '시험', '도구', 'check.cjs'), "if (process.argv[2] !== '--check' || process.env.SECRET_FOR_TEST) process.exit(3); console.log('확인됨');");
+  writeFileSync(join(root, '보관함', '시험', '도구', 'fail.cjs'), "console.error('첫 줄'); console.error('ERP 로그인이 필요합니다.'); process.exit(1);");
+  assert.deepEqual(await recipePreflight(root, 'pass-one', { env: { ...process.env, SECRET_FOR_TEST: '1' } }), { ok: true, checked: 1 }, '인자는 --check로 고정하고 목록에 없는 환경 변수는 넘기지 않는다');
+  assert.deepEqual(await recipePreflight(root, 'fail-one'), { ok: false, message: 'ERP 로그인이 필요합니다.' });
+  assert.match((await recipePreflight(root, 'outside')).message, /실행할 수 없습니다/);
+  assert.match((await recipePreflight(root, 'not-tool')).message, /실행할 수 없습니다/);
+  assert.deepEqual(await recipePreflight(root, 'none'), { ok: true, checked: 0 });
+});

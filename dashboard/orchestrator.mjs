@@ -17,7 +17,7 @@ import { BUDGET_WARN_RATIO, MAX_MAILS_PER_RUN, MAX_PLAN_REVISIONS, MAX_PROGRESS_
 import { mailKey, preparePublications, splitMailBatch } from '../lib/publications.mjs';
 import { mailPreviewHtml, writeMailPreview } from '../lib/mail-preview.mjs';
 import { mailHtml } from '../lib/mail-format.mjs';
-import { recipePlan } from '../lib/recipes.mjs';
+import { recipePlan, recipePreflight } from '../lib/recipes.mjs';
 import { attachmentQuestion, attachmentRef, blockedReason, pickChoices, resolveAttachments } from '../lib/attachments.mjs';
 import { collectFinalOutputs } from '../lib/final-outputs.mjs';
 import { checkSources, sourceProblemReason } from '../lib/source-check.mjs';
@@ -584,6 +584,14 @@ export async function orchestrate({ root, run, prompt, execute: runAI, signal, m
       return orchestrate({ root, run, prompt, execute: runAI, signal, maxParallel, resume: true, onDecision, outbound, intent, judge, home, sourceCheck, wait, notes });
     }
     if (needs.length) return ask([{ phase: 'account', replan, question: `이 업무에는 다음 계정이 필요합니다: ${[...new Set(needs)].join(', ')}. 보관함/계정.env에 사이트 주소·아이디·비밀번호를 적거나 상단 '계정 연결'에서 계정을 추가한 뒤, '로그인 창 열기'로 처음 한 번 직접 로그인하고 "이어서 재개"라고 답해 주세요. 로그인을 마치면 창은 자동으로 닫힙니다.` }]);
+  }
+  // 고정 절차의 시작 전 점검: 로그인·설정이 빠졌으면 직원을 부르기 전에 알린다. 대표가 답하면 이 자리로 돌아와 다시 확인한다
+  if (state.recipe && !state.preflightOk) {
+    const pre = await recipePreflight(root, state.recipe);
+    checkStop();
+    if (!pre.ok) { persist(); return ask([{ phase: 'preflight', question: `업무를 시작하기 전에 확인이 필요합니다: ${redact(pre.message)}` }]); }
+    state.preflightOk = true;
+    if (pre.checked) emit('flow.notice', { summary: '시작 전 점검을 통과했습니다.' });
   }
   // 메일 첨부: 대표가 지시문에 적은 파일을 서버가 찾는다(AI는 이름만 적음). 못 찾거나 여러 개면 조사·발송 전에 대표에게 묻는다
   const mailAttachmentRefs = () => [...new Set((plan.publications || []).filter((p) => p.action === 'mail' && allowedActions().includes('mail')).flatMap((p) => (p.attachments || []).map(attachmentRef)).filter(Boolean))];
