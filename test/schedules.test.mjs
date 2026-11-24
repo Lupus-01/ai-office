@@ -199,3 +199,13 @@ test('요일 반복 예약은 그 요일에만 실행하고 다음 같은 요일
   const daily = store.update(friday.id, { weekdays: null });
   assert.equal(daily.weekdays, null); assert.equal(daily.nextAt, '2026-11-01T04:00:00.000Z');
 });
+
+test('예약에 고정 절차 id가 있으면 예약 실행 때 함께 넘기고, 형식이 틀린 id는 저장하지 않는다', async (t) => {
+  const f = await fixture(t); const store = createSchedules(f.options);
+  store.add({ time: '11:00', prompt: '정책 지식 갱신해 줘', recipe: 'policy-sync' });
+  store.add({ time: '11:00', prompt: '다른 업무를 진행해 줘', recipe: 'Not Valid' });
+  f.set('2026-10-30T02:00:00Z'); store.tick();
+  assert.equal(f.started.length, 2);
+  assert.equal(f.started.find((s) => s.prompt.startsWith('정책 지식')).recipe, 'policy-sync');
+  assert.equal(f.started.find((s) => s.prompt.startsWith('다른 업무')).recipe, undefined);
+});

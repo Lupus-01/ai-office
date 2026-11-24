@@ -338,7 +338,7 @@ export function createRunner({ root, onChange, judge = null, maxConcurrent = 4, 
   // task: 이 실행을 연결할 업무 id(사용자 반려로 새 비서실장 실행을 띄울 때). 직원 직접 지시는 runner가 업무를 만든다
   // display: 실행 목록·대화 스레드에 보일 요청 요약(사용자 반려처럼 시스템이 만든 프롬프트 대신 사용자의 말을 보여줄 때)
   function start({ agentId = null, prompt, model = null, effort = null, engine = null, task = null, display = null,
-    continuous = undefined, monitorId = null, deliveryKey = null, schedule = null, intent = null } = {}) {
+    continuous = undefined, monitorId = null, deliveryKey = null, schedule = null, intent = null, recipe = null } = {}) {
     checkPrompt(prompt, model, '작업 요청');
     if (agentId !== null && (typeof agentId !== 'string' || !agentId)) throw httpError(400, '직원 id 형식이 올바르지 않습니다.');
     if (task !== null && !isTaskId(task)) throw httpError(400, '업무 id 형식이 올바르지 않습니다.');
@@ -360,6 +360,8 @@ export function createRunner({ root, onChange, judge = null, maxConcurrent = 4, 
     }
     if (controlled) { spec.orchestration = true; activateTask(taskId); }
     // 지시창에서 판별한 외부 작업·위임(근거 확인됨). 없으면 오케스트레이터가 규칙으로 판별한다
+    // 예약 실행이 넘긴 고정 절차(의도 판별 없이 시작하는 실행용. 외부 작업 허용은 지금처럼 규칙 판별이 정한다)
+    if (typeof recipe === 'string' && recipe) spec.recipe = recipe;
     if (intent && Array.isArray(intent.actions)) spec.intent = { actions: intent.actions.filter((a) => typeof a === 'string'), delegated: intent.delegated === true,
       ...(typeof intent.outputDir === 'string' && intent.outputDir ? { outputDir: intent.outputDir } : {}), source: intent.source,
       ...(typeof intent.recipe === 'string' && intent.recipe ? { recipe: intent.recipe } : {}),
@@ -739,7 +741,7 @@ export function createRunner({ root, onChange, judge = null, maxConcurrent = 4, 
               return start({ prompt, continuous: false, monitorId: run.rootId, deliveryKey: key,
                 display: `지속 감시 새 자료 보고: ${path.split('/').at(-1)}` });
             } });
-        } else text = await orchestrate({ root, run, prompt: spec.input, execute, signal: controller.signal, intent: spec.intent || null, judge,
+        } else text = await orchestrate({ root, run, prompt: spec.input, execute, signal: controller.signal, intent: spec.intent || null, recipe: spec.recipe || null, judge,
           maxParallel: maxConcurrent, resume: spec.resumeOrchestration, onDecision: () => { spec.needsDecision = true; }, outbound, notes: entry.notes, engineOf, platform });
       } catch (err) {
         status = controller.signal.aborted ? 'stopped' : 'failed';

@@ -867,7 +867,7 @@ export async function startServer({
       const requested = intent.source === 'ai' ? intent.schedule : await callRunner(() => scheduleRequest(prompt, scheduleNow()), '예약 시각을 확인해 주세요.');
       if (requested) {
         const defaults = loadSettings(root).chief;
-        const schedule = await callRunner(() => schedules.add({ prompt, ...requested,
+        const schedule = await callRunner(() => schedules.add({ prompt, ...requested, recipe: intent.recipe || '',
           chief: { engine: body.engine || defaults.engine, model: model || defaults.model, effort: body.effort || defaults.effort } }), '예약을 저장하지 못했습니다.');
         return { scheduled: true, schedule };
       }
