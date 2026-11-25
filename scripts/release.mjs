@@ -67,9 +67,9 @@ async function main(args) {
         throw new Error(`자리 표시가 지난번 ${preview.previousPlaceholders}곳에서 ${preview.placeholders}곳으로 줄었습니다. 실명을 잘못 적었으면 실명이 그대로 공개될 수 있어 멈췄습니다. 지침에서 실명을 뺀 게 맞으면 --yes를 붙이세요.`);
       }
       // 보관함 자료도 먼저 미리 보기로 흔적을 검사한다(흔적이 있으면 회사 구성도 쓰기 전에 멈춘다)
-      const filesPreview = await publishSharedFiles({ root, program, names, dryRun: true });
+      const filesPreview = await publishSharedFiles({ root, program, names, erp: erp || null, dryRun: true });
       if (dryRun) return { ...preview, files: filesPreview };
-      return { ...publishSharedOrg({ root, program, names, erp: erp || null }), files: await publishSharedFiles({ root, program, names }) };
+      return { ...publishSharedOrg({ root, program, names, erp: erp || null }), files: await publishSharedFiles({ root, program, names, erp: erp || null }) };
     },
   });
   if (opts.name !== null || opts.erp !== null || (r.pushed && !saved.pushUrl)) {

@@ -290,6 +290,23 @@ test('보관함 자료 publish: 양식을 shared/보관함/에 싣고 문서 정
   assert.ok(existsSync(sharedKit(program, '작성기준서.md')));
 });
 
+test('보관함 자료 publish: PC별 설정 파일(설정.json)은 싣지 않고, 도구에 ERP 주소가 적혀 있으면 쓰지 않는다', async (t) => {
+  const root = ownerPc(t);
+  const program = tempDir(t, 'office-shared-program-');
+  const toolDir = join(root, '보관함', '상담사관리', '도구');
+  mkdirSync(toolDir, { recursive: true });
+  writeFileSync(join(toolDir, 'erp-collect.cjs'), '// 수집 도구\n');
+  writeFileSync(join(toolDir, '설정.json'), '{"erp":"https://erp.example.co.kr"}\n');
+  const out = await publishSharedFiles({ root, program, names: ['가나다'], erp: 'https://erp.example.co.kr' });
+  assert.deepEqual(out.added, ['상담사관리/도구/erp-collect.cjs']);
+  assert.ok(existsSync(join(sharedFilesDir(program), '상담사관리', '도구', 'erp-collect.cjs')));
+  assert.equal(existsSync(join(sharedFilesDir(program), '상담사관리', '도구', '설정.json')), false, 'ERP 주소가 든 설정 파일은 싣지 않는다');
+
+  writeFileSync(join(toolDir, 'erp-collect.cjs'), '// 수집 도구 erp.example.co.kr\n');
+  await assert.rejects(publishSharedFiles({ root, program, names: ['가나다'], erp: 'https://erp.example.co.kr' }), /ERP 주소\(보관함\/상담사관리\/도구\/erp-collect\.cjs\)/);
+  assert.equal(readFileSync(join(sharedFilesDir(program), '상담사관리', '도구', 'erp-collect.cjs'), 'utf8'), '// 수집 도구\n');
+});
+
 test('보관함 자료 apply·refresh: 받는 PC 보관함/에 넣고, 자료만 바뀌면 회사 구성은 그대로 둔 채 자료만 맞춘다(고친 파일은 백업)', async (t) => {
   const owner = ownerPc(t);
   const program = tempDir(t, 'office-shared-program-');
